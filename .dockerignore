@@ -1,0 +1,10 @@
+.env
+.env.*
+__pycache__/
+*.py[cod]
+.git/
+.venv/
+venv/
+.claude/
+issues/
+CLAUDE.private.md
