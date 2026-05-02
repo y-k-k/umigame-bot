@@ -35,7 +35,7 @@ async def start_game(ctx, puzzle_id: int):
         return
 
     embed = discord.Embed(
-        title="🐢 ウミガメのスープ",
+        title=f"🐢 {session.title}",
         description=session.question,
         color=discord.Color.teal(),
     )

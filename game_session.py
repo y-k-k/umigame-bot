@@ -9,6 +9,7 @@ PUZZLES_PATH = Path(__file__).parent / "puzzles" / "puzzles.json"
 @dataclass
 class GameSession:
     puzzle_id: int
+    title: str
     question: str
     answer: str
     question_count: int = 0
@@ -43,6 +44,7 @@ def start_session(channel_id: int, puzzle_id: int) -> GameSession | None:
         return None
     session = GameSession(
         puzzle_id=puzzle_id,
+        title=puzzle["title"],
         question=puzzle["question"],
         answer=puzzle["answer"],
         elements=puzzle.get("elements", []),
