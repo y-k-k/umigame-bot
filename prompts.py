@@ -1,7 +1,34 @@
+import json
+import os
+
+
+def _load_knowledge_base() -> dict:
+    path = os.path.join(os.path.dirname(__file__), "puzzles", "knowledge_base.json")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _build_knowledge_section(answer: str) -> str:
+    kb = _load_knowledge_base()
+    entries = [(kw, entry) for kw, entry in kb.items() if kw in answer]
+    if not entries:
+        return ""
+
+    lines = ["## ナレッジベース（モデルの事前知識より優先すること）"]
+    lines.append("以下の記述は絶対的な事実です。この内容と矛盾する知識を持っていても、必ずナレッジベースの記述を優先してください。\n")
+    for keyword, entry in entries:
+        lines.append(f"### {keyword}")
+        lines.append(entry["description"])
+        for fact in entry["facts"]:
+            lines.append(f"- {fact}")
+    return "\n".join(lines) + "\n\n"
+
+
 def build_game_master_prompt(question: str, answer: str) -> str:
+    knowledge_section = _build_knowledge_section(answer)
     return f"""あなたは「ウミガメのスープ」ゲームの出題者です。
 
-## 真相（絶対に直接教えてはいけない）
+{knowledge_section}## 真相（絶対に直接教えてはいけない）
 {answer}
 
 ## 問題

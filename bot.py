@@ -187,11 +187,13 @@ async def on_message(message: discord.Message):
         return
 
     gs.increment_question_count(message.channel.id)
+    history = gs.get_history(message.channel.id)
     async with message.channel.typing():
         reply = await asyncio.to_thread(
-            cc.ask_question, session.question, session.answer, message.content
+            cc.ask_question, session.question, session.answer, message.content, history
         )
     await message.reply(reply)
+    gs.append_history(message.channel.id, message.content, reply)
 
 
 if __name__ == "__main__":

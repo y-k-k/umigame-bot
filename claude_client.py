@@ -12,12 +12,13 @@ def get_client() -> anthropic.Anthropic:
     return _client
 
 
-def ask_question(question: str, answer: str, user_message: str) -> str:
+def ask_question(question: str, answer: str, user_message: str, history: list[dict] | None = None) -> str:
+    messages = (history or []) + [{"role": "user", "content": user_message}]
     response = get_client().messages.create(
         model="claude-sonnet-4-6",
         max_tokens=256,
         system=build_game_master_prompt(question, answer),
-        messages=[{"role": "user", "content": user_message}],
+        messages=messages,
     )
     return response.content[0].text.strip()
 

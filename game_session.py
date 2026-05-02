@@ -14,6 +14,7 @@ class GameSession:
     question_count: int = 0
     elements: list[dict] = field(default_factory=list)
     revealed_ids: set[str] = field(default_factory=set)
+    history: list[dict] = field(default_factory=list)
 
 
 _sessions: dict[int, GameSession] = {}
@@ -56,6 +57,18 @@ def get_session(channel_id: int) -> GameSession | None:
 
 def end_session(channel_id: int) -> None:
     _sessions.pop(channel_id, None)
+
+
+def append_history(channel_id: int, user_message: str, bot_reply: str) -> None:
+    session = _sessions.get(channel_id)
+    if session:
+        session.history.append({"role": "user", "content": user_message})
+        session.history.append({"role": "assistant", "content": bot_reply})
+
+
+def get_history(channel_id: int) -> list[dict]:
+    session = _sessions.get(channel_id)
+    return session.history if session else []
 
 
 def increment_question_count(channel_id: int) -> None:
