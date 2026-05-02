@@ -13,6 +13,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+bot.remove_command("help")
 
 
 @bot.event
@@ -44,7 +45,6 @@ async def start_game(ctx, puzzle_id: int):
     await ctx.send(
         "**コマンド一覧**\n"
         "`!ヒント` — 次のヒントを1つ表示\n"
-        "`!進捗 <あなたの推理>` — 真相への到達度を確認\n"
         "`!採点 <あなたの推理>` — 到達度＋わかっていることを詳しく確認\n"
         "`!答え合わせ` — 真相を表示してゲーム終了\n"
         "`!終了` — ゲームを中断"
@@ -95,15 +95,29 @@ async def score(ctx, *, theory: str):
             cc.check_score, session.question, session.answer, theory, session.elements
         )
 
-    covered_hints, next_numbers = gs.get_score_details(ctx.channel.id, covered_ids)
-
     bar_filled = round(progress / 10)
     bar = "█" * bar_filled + "░" * (10 - bar_filled)
-    lines = [f"**到達度: {progress}%** `{bar}`"]
 
     if progress == 100:
-        lines.append("\n🎉 **真相に完全に到達しました！**\n`!答え合わせ` で模範解答を確認してみましょう。")
+        await ctx.send(f"**到達度: {progress}%** `{bar}`\n\n🎉 **真相に完全に到達しました！**")
+        async with ctx.typing():
+            point = await asyncio.to_thread(
+                cc.reveal_answer, session.question, session.answer, session.elements
+            )
+        question_count = session.question_count
+        gs.end_session(ctx.channel.id)
+        embed = discord.Embed(
+            title="🐢 真相",
+            description=session.answer,
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="ポイント", value=point, inline=False)
+        embed.set_footer(text=f"質問回数: {question_count}回")
+        await ctx.send(embed=embed)
     else:
+        covered_hints, next_numbers = gs.get_score_details(ctx.channel.id, covered_ids)
+        lines = [f"**到達度: {progress}%** `{bar}`"]
+
         if covered_hints:
             lines.append("\n**✅ わかっていること**")
             lines.extend(f"・{h}" for h in covered_hints)
@@ -112,27 +126,7 @@ async def score(ctx, *, theory: str):
             nums = " / ".join(f"`!ヒント {n}`" for n in next_numbers)
             lines.append(f"\n**💡 次のステップ**: {nums}")
 
-    await ctx.send("\n".join(lines))
-
-
-@bot.command(name="進捗")
-async def check_progress(ctx, *, theory: str):
-    session = gs.get_session(ctx.channel.id)
-    if session is None:
-        await ctx.send("現在進行中のゲームがありません。`!開始 <番号>` で始めてください。")
-        return
-
-    async with ctx.typing():
-        progress = await asyncio.to_thread(
-            cc.check_progress, session.question, session.answer, theory, session.elements
-        )
-
-    bar_filled = round(progress / 10)
-    bar = "█" * bar_filled + "░" * (10 - bar_filled)
-    msg = f"**到達度: {progress}%** `{bar}`"
-    if progress == 100:
-        msg += "\n\n🎉 **真相に完全に到達しました！**\n`!答え合わせ` で模範解答を確認してみましょう。"
-    await ctx.send(msg)
+        await ctx.send("\n".join(lines))
 
 
 @bot.command(name="答え合わせ")
@@ -167,6 +161,21 @@ async def stop_game(ctx):
         return
     gs.end_session(ctx.channel.id)
     await ctx.send("ゲームを終了しました。")
+
+
+@bot.command(name="help")
+async def help_command(ctx):
+    await ctx.send(
+        "**── コマンド一覧 ──**\n"
+        "`!問題一覧` — 問題一覧を表示\n"
+        "`!開始 <番号>` — ゲーム開始\n"
+        "`!ヒント` — ヒントを表示 続けて叩くと次のヒントを表示 \n"
+        "`!ヒント <番号>` — 指定番号のヒントを直接表示\n"
+        "`!採点 <推理>` — 到達度＋わかっていることを詳しく確認\n"
+        "`!答え合わせ` — 真相を表示してゲーム終了\n"
+        "`!終了` — ゲームを中断\n"
+        "`!help` — このコマンド一覧を表示"
+    )
 
 
 @bot.event

@@ -35,14 +35,6 @@ def _evaluate_elements(question: str, answer: str, user_theory: str, elements: l
     return data.get("covered", [])
 
 
-def check_progress(question: str, answer: str, user_theory: str, elements: list[dict]) -> int:
-    covered = _evaluate_elements(question, answer, user_theory, elements)
-    total = len(elements)
-    if total == 0:
-        return 0
-    return round(len(covered) / total * 100)
-
-
 def check_score(question: str, answer: str, user_theory: str, elements: list[dict]) -> tuple[int, list[str]]:
     covered = _evaluate_elements(question, answer, user_theory, elements)
     total = len(elements)
