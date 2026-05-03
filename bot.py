@@ -15,24 +15,18 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 bot.remove_command("help")
 
+PUZZLES_PER_PAGE = 25
+
 
 @bot.event
 async def on_ready():
     print(f"Bot起動: {bot.user}")
 
 
-@bot.command(name="問題一覧")
-async def list_puzzles(ctx):
-    puzzles = gs.list_puzzles()
-    lines = [f"**{p['id']}**: {p['title']}" for p in puzzles]
-    await ctx.send("**── 問題一覧 ──**\n" + "\n".join(lines) + "\n\n`!開始 <番号>` で問題を選んでください")
-
-
-@bot.command(name="開始")
-async def start_game(ctx, puzzle_id: int):
-    session = gs.start_session(ctx.channel.id, puzzle_id)
+async def _do_start_game(channel: discord.TextChannel, puzzle_id: int) -> None:
+    session = gs.start_session(channel.id, puzzle_id)
     if session is None:
-        await ctx.send(f"問題番号 {puzzle_id} は存在しません。`!問題一覧` で確認してください。")
+        await channel.send(f"問題番号 {puzzle_id} は存在しません。`!問題一覧` で確認してください。")
         return
 
     embed = discord.Embed(
@@ -41,14 +35,60 @@ async def start_game(ctx, puzzle_id: int):
         color=discord.Color.teal(),
     )
     embed.set_footer(text="はい/いいえ/関係ありません で答えます。質問を自由に入力してください。")
-    await ctx.send(embed=embed)
-    await ctx.send(
+    await channel.send(embed=embed)
+    await channel.send(
         "**コマンド一覧**\n"
         "`!ヒント` — 次のヒントを1つ表示\n"
         "`!採点 <あなたの推理>` — 到達度＋わかっていることを詳しく確認\n"
         "`!答え合わせ` — 真相を表示してゲーム終了\n"
         "`!終了` — ゲームを中断"
     )
+
+
+class PuzzleSelectView(discord.ui.View):
+    def __init__(self, puzzles: list[dict]):
+        super().__init__(timeout=None)
+        for puzzle in puzzles:
+            label = f"{puzzle['id']}: {puzzle['title']}"
+            if len(label) > 80:
+                label = label[:77] + "..."
+            button = discord.ui.Button(
+                label=label,
+                custom_id=f"puzzle_{puzzle['id']}",
+                style=discord.ButtonStyle.primary,
+            )
+            button.callback = self._make_callback(puzzle["id"])
+            self.add_item(button)
+
+    def _make_callback(self, puzzle_id: int):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            await interaction.channel.send(f"!開始 {puzzle_id}")
+            await _do_start_game(interaction.channel, puzzle_id)
+
+        return callback
+
+
+@bot.command(name="問題一覧")
+async def list_puzzles(ctx, page: int = 1):
+    puzzles = gs.list_puzzles()
+    total_pages = max(1, (len(puzzles) + PUZZLES_PER_PAGE - 1) // PUZZLES_PER_PAGE)
+
+    if page < 1 or page > total_pages:
+        await ctx.send(f"ページ {page} は存在しません（1〜{total_pages}ページ）。")
+        return
+
+    start = (page - 1) * PUZZLES_PER_PAGE
+    page_puzzles = puzzles[start : start + PUZZLES_PER_PAGE]
+
+    page_info = f"（{page}/{total_pages}ページ）" if total_pages > 1 else ""
+    view = PuzzleSelectView(page_puzzles)
+    await ctx.send(f"**── 問題一覧 {page_info}──**", view=view)
+
+
+@bot.command(name="開始")
+async def start_game(ctx, puzzle_id: int):
+    await _do_start_game(ctx.channel, puzzle_id)
 
 
 @bot.command(name="ヒント")
@@ -168,8 +208,9 @@ async def help_command(ctx):
     await ctx.send(
         "**── コマンド一覧 ──**\n"
         "`!問題一覧` — 問題一覧を表示\n"
+        "`!問題一覧 <ページ>` — 指定ページの問題一覧を表示\n"
         "`!開始 <番号>` — ゲーム開始\n"
-        "`!ヒント` — ヒントを表示 続けて叩くと次のヒントを表示 \n"
+        "`!ヒント` — 依存解決済みの次のヒントを順に表示\n"
         "`!ヒント <番号>` — 指定番号のヒントを直接表示\n"
         "`!採点 <推理>` — 到達度＋わかっていることを詳しく確認\n"
         "`!答え合わせ` — 真相を表示してゲーム終了\n"
