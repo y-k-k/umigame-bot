@@ -1,4 +1,5 @@
 import os
+import time
 import asyncio
 import discord
 from discord.ext import commands
@@ -23,6 +24,87 @@ async def on_ready():
     print(f"Bot起動: {bot.user}")
 
 
+async def _do_auto_generate(channel: discord.TextChannel) -> None:
+    await channel.send("🎲 **自動作問モード開始**\n問題を生成しています...")
+
+    puzzles = gs.load_puzzles_raw()
+    reviewed: dict | None = None
+    previous_feedback: str | None = None
+
+    for attempt in range(1, 11):
+        t0 = time.time()
+        async with channel.typing():
+            try:
+                qa = await asyncio.to_thread(cc.generate_quiz, puzzles, previous_feedback)
+            except Exception as e:
+                await channel.send(f"❌ 作問中にエラーが発生しました: {e}")
+                return
+        gen_secs = round(time.time() - t0)
+        await channel.send(f"📝 **作問完了**（{gen_secs}秒） [{attempt}/10回目]")
+
+        t0 = time.time()
+        async with channel.typing():
+            try:
+                reviewed = await asyncio.to_thread(cc.review_quiz, qa["question"], qa["answer"])
+            except Exception as e:
+                await channel.send(f"❌ 校閲中にエラーが発生しました: {e}")
+                return
+        review_secs = round(time.time() - t0)
+        score = reviewed["score"]
+        print(f"[review_quiz] {reviewed}")
+        await channel.send(f"🔍 **校閲完了**（{review_secs}秒） スコア: **{score}/10**")
+
+        if score >= 9:
+            break
+        previous_feedback = reviewed.get("reason", "")
+    else:
+        await channel.send("❌ 10回試行しましたが、基準を満たす問題を生成できませんでした。")
+        return
+
+    t0 = time.time()
+    async with channel.typing():
+        try:
+            prepared = await asyncio.to_thread(
+                cc.prepare_quiz,
+                reviewed["corrected_question"],
+                reviewed["corrected_answer"],
+            )
+        except Exception as e:
+            await channel.send(f"❌ 出題準備中にエラーが発生しました: {e}")
+            return
+    prep_secs = round(time.time() - t0)
+    await channel.send(f"⚙️ **出題準備完了**（{prep_secs}秒）")
+
+    session = gs.start_generated_session(
+        channel.id,
+        prepared["title"],
+        reviewed["corrected_question"],
+        reviewed["corrected_answer"],
+        prepared["elements"],
+        prepared.get("knowledge_base"),
+    )
+
+    embed = discord.Embed(
+        title=f"🐢 {session.title}",
+        description=session.question,
+        color=discord.Color.teal(),
+    )
+    embed.set_footer(text="はい/いいえ/関係ありません で答えます。質問を自由に入力してください。")
+    await channel.send(embed=embed)
+    await channel.send(
+        "**コマンド一覧**\n"
+        "`!ヒント` — 次のヒントを1つ表示\n"
+        "`!採点 <あなたの推理>` — 到達度＋わかっていることを詳しく確認\n"
+        "`!答え合わせ` — 真相を表示してゲーム終了\n"
+        "`!終了` — ゲームを中断（自動的に答え合わせを表示）"
+    )
+
+
+def _difficulty_stars(difficulty: int) -> str:
+    filled = min(max(difficulty, 0), 5)
+    return "★" * filled + "☆" * (5 - filled)
+
+
 async def _do_start_game(channel: discord.TextChannel, puzzle_id: int) -> None:
     session = gs.start_session(channel.id, puzzle_id)
     if session is None:
@@ -34,6 +116,8 @@ async def _do_start_game(channel: discord.TextChannel, puzzle_id: int) -> None:
         description=session.question,
         color=discord.Color.teal(),
     )
+    if session.difficulty:
+        embed.add_field(name="難易度", value=_difficulty_stars(session.difficulty), inline=False)
     embed.set_footer(text="はい/いいえ/関係ありません で答えます。質問を自由に入力してください。")
     await channel.send(embed=embed)
     await channel.send(
@@ -88,7 +172,10 @@ async def list_puzzles(ctx, page: int = 1):
 
 @bot.command(name="開始")
 async def start_game(ctx, puzzle_id: int):
-    await _do_start_game(ctx.channel, puzzle_id)
+    if puzzle_id == -1:
+        await _do_auto_generate(ctx.channel)
+    else:
+        await _do_start_game(ctx.channel, puzzle_id)
 
 
 @bot.command(name="ヒント")
@@ -199,8 +286,25 @@ async def stop_game(ctx):
     if session is None:
         await ctx.send("現在進行中のゲームがありません。")
         return
-    gs.end_session(ctx.channel.id)
-    await ctx.send("ゲームを終了しました。")
+
+    if session.puzzle_id == -1:
+        async with ctx.typing():
+            point = await asyncio.to_thread(
+                cc.reveal_answer, session.question, session.answer, session.elements
+            )
+        question_count = session.question_count
+        gs.end_session(ctx.channel.id)
+        embed = discord.Embed(
+            title="🐢 真相",
+            description=session.answer,
+            color=discord.Color.gold(),
+        )
+        embed.add_field(name="ポイント", value=point, inline=False)
+        embed.set_footer(text=f"質問回数: {question_count}回")
+        await ctx.send(embed=embed)
+    else:
+        gs.end_session(ctx.channel.id)
+        await ctx.send("ゲームを終了しました。")
 
 
 @bot.command(name="help")
@@ -238,9 +342,10 @@ async def on_message(message: discord.Message):
 
     gs.increment_question_count(message.channel.id)
     history = gs.get_history(message.channel.id)
+    extra_knowledge = session.extra_knowledge or None
     async with message.channel.typing():
         reply = await asyncio.to_thread(
-            cc.ask_question, session.question, session.answer, message.content, history
+            cc.ask_question, session.question, session.answer, message.content, history, extra_knowledge
         )
     await message.reply(reply)
     gs.append_history(message.channel.id, message.content, reply)

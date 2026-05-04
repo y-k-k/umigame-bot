@@ -1,6 +1,7 @@
 # 問題の追加手順
 
-`title` / `question` / `answer` が与えられたとき、以下の手順で `puzzles.json` に追加する。
+`title` / `question` / `answer` / `difficulty` が与えられたとき、以下の手順で `puzzles.json` に追加する。  
+`difficulty` が与えられていない場合は、elements 設計後にユーザーに確認する（1〜5の整数）。
 
 ---
 
@@ -151,6 +152,7 @@ JSON追加前に、設計したelementsを以下の形式で表示し確認を�
   "title": "<タイトル>",
   "question": "<問題文>",
   "answer": "<答え>",
+  "difficulty": <1〜5の整数>,
   "elements": [
     {
       "id": "A",

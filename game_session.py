@@ -12,10 +12,12 @@ class GameSession:
     title: str
     question: str
     answer: str
+    difficulty: int = 0
     question_count: int = 0
     elements: list[dict] = field(default_factory=list)
     revealed_ids: set[str] = field(default_factory=set)
     history: list[dict] = field(default_factory=list)
+    extra_knowledge: dict = field(default_factory=dict)
 
 
 _sessions: dict[int, GameSession] = {}
@@ -34,6 +36,10 @@ def list_puzzles() -> list[dict]:
     return [{"id": p["id"], "title": p["title"]} for p in _load_puzzles()]
 
 
+def load_puzzles_raw() -> list[dict]:
+    return _load_puzzles()
+
+
 def get_puzzle(puzzle_id: int) -> dict | None:
     return next((p for p in _load_puzzles() if p["id"] == puzzle_id), None)
 
@@ -47,7 +53,28 @@ def start_session(channel_id: int, puzzle_id: int) -> GameSession | None:
         title=puzzle["title"],
         question=puzzle["question"],
         answer=puzzle["answer"],
+        difficulty=puzzle.get("difficulty", 0),
         elements=puzzle.get("elements", []),
+    )
+    _sessions[channel_id] = session
+    return session
+
+
+def start_generated_session(
+    channel_id: int,
+    title: str,
+    question: str,
+    answer: str,
+    elements: list[dict],
+    extra_knowledge: dict | None = None,
+) -> GameSession:
+    session = GameSession(
+        puzzle_id=-1,
+        title=title,
+        question=question,
+        answer=answer,
+        elements=elements,
+        extra_knowledge=extra_knowledge or {},
     )
     _sessions[channel_id] = session
     return session

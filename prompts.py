@@ -1,11 +1,23 @@
 import json
 import os
 
-
 def _load_knowledge_base() -> dict:
     path = os.path.join(os.path.dirname(__file__), "puzzles", "knowledge_base.json")
     with open(path, encoding="utf-8") as f:
         return json.load(f)
+
+
+def _build_knowledge_section_from_dict(kb: dict) -> str:
+    if not kb:
+        return ""
+    lines = ["## ナレッジベース（モデルの事前知識より優先すること）"]
+    lines.append("以下の記述は絶対的な事実です。この内容と矛盾する知識を持っていても、必ずナレッジベースの記述を優先してください。\n")
+    for keyword, entry in kb.items():
+        lines.append(f"### {keyword}")
+        lines.append(entry.get("description", ""))
+        for fact in entry.get("facts", []):
+            lines.append(f"- {fact}")
+    return "\n".join(lines) + "\n\n"
 
 
 def _build_knowledge_section(answer: str) -> str:
@@ -24,8 +36,11 @@ def _build_knowledge_section(answer: str) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def build_game_master_prompt(question: str, answer: str) -> str:
-    knowledge_section = _build_knowledge_section(answer)
+def build_game_master_prompt(question: str, answer: str, extra_knowledge: dict | None = None) -> str:
+    if extra_knowledge is not None:
+        knowledge_section = _build_knowledge_section_from_dict(extra_knowledge)
+    else:
+        knowledge_section = _build_knowledge_section(answer)
     return f"""あなたは「ウミガメのスープ」ゲームの出題者です。
 
 {knowledge_section}## 真相（絶対に直接教えてはいけない）
@@ -38,11 +53,11 @@ def build_game_master_prompt(question: str, answer: str) -> str:
 ユーザーからの質問に対して、以下の3つのいずれかで答えてください：
 - **はい** — 事実として正しい場合
 - **いいえ** — 事実として正しくない場合
-- **関係ありません** — 真相を解くのに直接関係しない場合
+- **どちらともいえません** — はい/いいえで断言できない場合（真相に記載がない・程度の問題・真相に直接関係しないなど）
 
 ## 厳守ルール
 - 真相を直接・間接的に明かしてはいけません
-- 「はい」「いいえ」「関係ありません」以外の余分な情報を加えてはいけません
+- 「はい」「いいえ」「どちらともいえません」以外の余分な情報を加えてはいけません
 - ただし、質問が曖昧な場合は「質問の意味が明確ではありません。もう少し具体的に聞いてください」とだけ返してください
 - ユーザーが真相を完全に言い当てた場合のみ「正解です！」と答えてください
 - 「〜は答えに含まれますか」「〜は真相の設定にありますか」のようなメタ質問も、真相に照らして「はい」「いいえ」で答えてください
@@ -53,7 +68,7 @@ def build_game_master_prompt(question: str, answer: str) -> str:
 - 例外：真相に登場する人物の属性（年齢・職業・性別など）が未記載の場合のみ、真相に登場する慣習・行為から文化的常識で推測して「はい」「いいえ」で答えてください。
 
 ## 回答形式
-「はい」「いいえ」「関係ありません」のどれか一言（または上記の例外メッセージ）だけを返してください。"""
+「はい」「いいえ」「どちらともいえません」のどれか一言（または上記の例外メッセージ）だけを返してください。"""
 
 
 def build_progress_prompt(question: str, answer: str, user_theory: str, elements: list[dict]) -> str:
@@ -78,6 +93,131 @@ def build_progress_prompt(question: str, answer: str, user_theory: str, elements
 
 以下のJSON形式のみで返してください（他の文字を含めないこと）：
 {{"covered": [<カバー済みの要素IDの文字列リスト>]}}"""
+
+
+def _format_puzzle_example(i: int, p: dict) -> str:
+    lines = [
+        f"### 例{i + 1}",
+        f"**問題文**: {p['question']}",
+        f"**答え**: {p['answer']}",
+    ]
+    if p.get("elements"):
+        lines.append("**ヒント構造**:")
+        for e in p["elements"]:
+            dep = f"← {', '.join(e['depends_on'])}" if e["depends_on"] else "（entry point）"
+            lines.append(f"  [{e['id']}] {e['hint']}　{dep}")
+    return "\n".join(lines)
+
+
+def build_quiz_generator_prompt(puzzles: list[dict], previous_feedback: str | None = None) -> str:
+    examples = "\n\n".join(_format_puzzle_example(i, p) for i, p in enumerate(puzzles))
+    feedback_section = ""
+    if previous_feedback:
+        feedback_section = f"\n## 前回の問題への指摘（必ず改善すること）\n{previous_feedback}\n"
+    return f"""あなたは「ウミガメのスープ」の作問者です。
+以下の既存問題を参考に、新しい問題を1セット作成してください。
+
+## 高品質な既存問題の例
+{examples}
+
+## 高品質な問題が持つ唯一の原則
+**「問題文の描写は全て正確だが、読者が想定する場面とは全く異なる場面にいた」**という構造のみが高評価になります。
+
+具体例：
+- 「車に乗ったのに移動しなかった」→ 車は献血車。その場で献血しただけ（「車」の種類が違った）
+- 「木の板が浮いている」→ 冷凍庫の中で棒アイスが溶け、棒だけが液体に浮いている（「場所」が全く違った）
+- 「箱の中に小さな人が入っている」→ 読めない漢字「囚人」の字形を口頭で説明していた（「状況」が全く違った）
+
+この構造の特徴：
+- 問題文の言葉を比喩や置き換えとして使わない（全て文字通りの意味）
+- 答えを知った後「確かにその場面ならこうなる」と自然に納得できる
+- 問題文から答えへ、段階的なヒントで誘導できる（2〜4ステップ）
+
+## ヒント設計しやすい answer の条件
+
+上記の「ヒント構造」を参照。高品質な answer は以下の段階に自然に分解できます：
+- **entry point**（問題文の情報から発想できる手がかり）が1〜3個
+- **core**（answer の核心）は複数の entry point が合流した末端に位置する
+
+answer を書いたあと、「この answer を 2〜4 個の段階的な気づきに分解できるか」を確認してください。
+1ステップで answer の核心に辿り着ける構造は NG です（例の「ヒント構造」を参考に）。
+{feedback_section}
+## 禁止パターン（これをやると7点以下になる）
+- 語の置き換え：「パートナー」が包丁、「川」が現像槽、「書類」がおみくじ、「踏みつぶす」が飛び石など。言葉をミスリードとして使う構造は「無理がある」と判定される
+- 1ステップ推測：問題文から答えが1つの連想で辿り着ける（「名前が変わった」→登録名変更、など）
+
+## その他の作成ルール
+- question と answer のみ作成すること（title・elements は不要）
+- answer に登場人物の属性（年齢・性別・職業など）が謎を解くうえで重要な場合は明記すること
+
+出力前に以下を1行ずつ確認し、確認コメントを書いてから ```json ブロックで出力してください：
+1. 全ての言葉が文字通りの意味か（語の置き換えになっていないか）
+2. 「場面の違い」構造になっているか（問題文の描写は正確、想定と異なる場面）
+3. 答えが一意に特定できるか
+
+```json
+{{"question": "...", "answer": "..."}}
+```"""
+
+
+def build_quiz_reviewer_prompt() -> str:
+    return """あなたは「ウミガメのスープ」問題集の編集者です。
+提示された問題と答えを客観的に評価し、必要に応じて修正してください。
+
+## 評価手順
+1. 以下のいずれかに該当する場合は修正する
+   - 不適切な表現（差別的・過度に暴力的など）
+   - question の登場人物の描写が answer の実態と食い違っている（例：answer では食品サンプル職人なのに question で「料理人」と呼んでいるなど）。ウミガメのスープの謎として成立するよう、職業・属性を answer に合わせた中立的な表現に修正する
+2. 修正後の問題・答えを以下の基準で10点満点で採点する
+
+## 採点基準
+- ウミガメのスープとして成立しているか（問題文に謎がある、答えで謎が解ける）
+- 問題文だけでは答えが予測しにくいか
+- 答えが論理的に一意に特定できるか（他の解釈が成立しない）
+- 答えに登場人物の属性（年齢・性別・職業など）が明記されているか
+- ヒント（elements）が2〜4個程度になりそうな構造か
+- 問題文の言葉を比喩・置き換えとして使っていないか（全て文字通りの意味か）
+- 文章の長さはマイナス評価しない
+
+## スコアの目安
+- 9〜10点：問題文の描写が全て正確で、答えを知った後に「確かにその場面ならこうなる」と完全に納得できる。一意性が高く、ヒント設計も自然にできる
+- 7〜8点：構造は成立しているが、語の置き換えが若干強引、推測しやすい、または一意性がやや弱いなど小さな欠点がある
+- 5〜6点：謎は成立するが、論理の飛躍や不自然な設定、複数の偶然の重なりがある
+- 4点以下：謎として成立しない、または答えが複数考えられる
+
+以下のJSON形式のみで返してください（他の文字を含めないこと）：
+{"corrected_question": "...", "corrected_answer": "...", "score": <0〜10の整数>, "reason": "評価理由を1〜2文で"}"""
+
+
+def build_quiz_preparer_prompt() -> str:
+    return """あなたは「ウミガメのスープ」ゲームの出題準備担当です。
+提示された問題と答えをもとに、出題に必要な以下の3点を作成してください。
+
+## 1. title
+10文字以内の簡潔なタイトル。
+
+## 2. elements（ヒント要素）
+答えに含まれていて問題文には含まれていない情報を2〜4個の依存グラフとして構築する。
+
+各要素のフィールド:
+- id: entry pointは "A" "B" "C"、派生は "B1" "B2"、核心は "E"
+- label: 設計用ラベル（プレイヤーには見えない）
+- hint: プレイヤー向けの文言。答えを直接明かさない。entry pointは方向性のみ、深い要素ほど具体的に
+- depends_on: 前提となるidのリスト（entry pointは []）
+
+## 3. knowledge_base
+慣用句・文化的風習・特定の制度が含まれる場合のみ作成する。不要な場合は {} にする。
+
+knowledge_baseのフォーマット:
+{
+  "<キーワード>": {
+    "description": "概要説明",
+    "facts": ["事実1", "事実2"]
+  }
+}
+
+以下のJSON形式のみで返してください（他の文字を含めないこと）：
+{"title": "...", "elements": [...], "knowledge_base": {...}}"""
 
 
 def build_reveal_prompt(question: str, answer: str, elements: list[dict]) -> str:
