@@ -14,7 +14,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
-bot.remove_command("help")
 
 PUZZLES_PER_PAGE = 25
 
@@ -115,7 +114,7 @@ async def _run_auto_generate(channel: discord.TextChannel) -> None:
         description=session.question,
         color=discord.Color.teal(),
     )
-    embed.set_footer(text="はい/いいえ/関係ありません で答えます。質問を自由に入力してください。")
+    embed.set_footer(text="はい/いいえ/どちらともいえません/関係ありません で答えます。質問を自由に入力してください。")
     await channel.send(embed=embed)
     await channel.send(
         "**コマンド一覧**\n"
@@ -144,7 +143,7 @@ async def _do_start_game(channel: discord.TextChannel, puzzle_id: int) -> None:
     )
     if session.difficulty:
         embed.add_field(name="難易度", value=_difficulty_stars(session.difficulty), inline=False)
-    embed.set_footer(text="はい/いいえ/関係ありません で答えます。質問を自由に入力してください。")
+    embed.set_footer(text="はい/いいえ/どちらともいえません/関係ありません で答えます。質問を自由に入力してください。")
     await channel.send(embed=embed)
     await channel.send(
         "**コマンド一覧**\n"
@@ -342,10 +341,27 @@ async def stop_game(ctx):
         await ctx.send("ゲームを終了しました。")
 
 
-@bot.command(name="help")
-async def help_command(ctx):
+@bot.command(name="遊び方")
+async def how_to_play(ctx):
     await ctx.send(
-        "**── コマンド一覧 ──**\n"
+        "**━━ ウミガメのスープ 遊び方 ━━**\n"
+        "\n"
+        "**📖 ゲームの概要**\n"
+        "謎めいた場面が提示されます。「はい」「いいえ」「関係ない」で答えられる質問を繰り返し、真相を推理するゲームです。\n"
+        "\n"
+        "**🎮 ゲームの流れ**\n"
+        "```\n"
+        "1. !問題一覧      → 問題を選ぶ\n"
+        "2. !開始 <番号>   → ゲーム開始。謎の場面が表示される\n"
+        "3. チャットで質問 → 「〇〇ですか？」と送るとBotが答える\n"
+        "                    ※ はい / いいえ / 関係ない で回答\n"
+        "4. !ヒント        → 行き詰まったらヒントを使える\n"
+        "5. !採点 <推理>   → 真相に近づいたと思ったら採点依頼\n"
+        "                    到達度が100%になると自動で答え合わせ\n"
+        "6. !答え合わせ    → 諦めたときや確認したいときは直接真相へ\n"
+        "```\n"
+        "\n"
+        "**📋 コマンド一覧**\n"
         "`!問題一覧` — 問題一覧を表示\n"
         "`!問題一覧 <ページ>` — 指定ページの問題一覧を表示\n"
         "`!開始 <番号>` — ゲーム開始\n"
@@ -354,8 +370,7 @@ async def help_command(ctx):
         "`!採点 <推理>` — 到達度＋わかっていることを詳しく確認\n"
         "`!答え合わせ` — 真相を表示してゲーム終了\n"
         "`!終了` — ゲームを中断\n"
-        "`!中断` — 自動作問をキャンセル\n"
-        "`!help` — このコマンド一覧を表示"
+        "`!遊び方` — この説明を表示"
     )
 
 
