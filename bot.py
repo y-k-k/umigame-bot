@@ -103,7 +103,7 @@ async def _run_auto_generate(channel: discord.TextChannel) -> None:
 
     session = gs.start_generated_session(
         channel.id,
-        prepared["title"],
+        "ウミガメのスープ",
         reviewed["corrected_question"],
         reviewed["corrected_answer"],
         prepared["elements"],

@@ -195,12 +195,9 @@ def build_quiz_reviewer_prompt() -> str:
 
 def build_quiz_preparer_prompt() -> str:
     return """あなたは「ウミガメのスープ」ゲームの出題準備担当です。
-提示された問題と答えをもとに、出題に必要な以下の3点を作成してください。
+提示された問題と答えをもとに、出題に必要な以下の2点を作成してください。
 
-## 1. title
-10文字以内の簡潔なタイトル。
-
-## 2. elements（ヒント要素）
+## 1. elements（ヒント要素）
 答えに含まれていて問題文には含まれていない情報を2〜4個の依存グラフとして構築する。
 
 各要素のフィールド:
@@ -209,7 +206,7 @@ def build_quiz_preparer_prompt() -> str:
 - hint: プレイヤー向けの文言。答えを直接明かさない。entry pointは方向性のみ、深い要素ほど具体的に
 - depends_on: 前提となるidのリスト（entry pointは []）
 
-## 3. knowledge_base
+## 2. knowledge_base
 慣用句・文化的風習・特定の制度が含まれる場合のみ作成する。不要な場合は {} にする。
 
 knowledge_baseのフォーマット:
@@ -221,7 +218,7 @@ knowledge_baseのフォーマット:
 }
 
 以下のJSON形式のみで返してください（他の文字を含めないこと）：
-{"title": "...", "elements": [...], "knowledge_base": {...}}"""
+{"elements": [...], "knowledge_base": {...}}"""
 
 
 def build_reveal_prompt(question: str, answer: str, elements: list[dict]) -> str:
