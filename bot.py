@@ -18,6 +18,9 @@ bot.remove_command("help")
 
 PUZZLES_PER_PAGE = 25
 
+_generating_channels: set[int] = set()
+_cancel_requested: set[int] = set()
+
 
 @bot.event
 async def on_ready():
@@ -25,6 +28,21 @@ async def on_ready():
 
 
 async def _do_auto_generate(channel: discord.TextChannel) -> None:
+    if channel.id in _generating_channels:
+        await channel.send("⚠️ すでに自動作問が進行中です。`!中断` でキャンセルできます。")
+        return
+
+    _generating_channels.add(channel.id)
+    _cancel_requested.discard(channel.id)
+
+    try:
+        await _run_auto_generate(channel)
+    finally:
+        _generating_channels.discard(channel.id)
+        _cancel_requested.discard(channel.id)
+
+
+async def _run_auto_generate(channel: discord.TextChannel) -> None:
     await channel.send("🎲 **自動作問モード開始**\n問題を生成しています...")
 
     puzzles = gs.load_puzzles_raw()
@@ -32,6 +50,10 @@ async def _do_auto_generate(channel: discord.TextChannel) -> None:
     failed_attempts: list[str] = []
 
     for attempt in range(1, 11):
+        if channel.id in _cancel_requested:
+            await channel.send("⛔ 自動作問をキャンセルしました。")
+            return
+
         previous_feedback = "\n".join(failed_attempts) if failed_attempts else None
 
         t0 = time.time()
@@ -56,7 +78,7 @@ async def _do_auto_generate(channel: discord.TextChannel) -> None:
         print(f"[review_quiz] {reviewed}")
         await channel.send(f"🔍 **校閲完了**（{review_secs}秒） スコア: **{score}/10**")
 
-        if score >= 9:
+        if score >= 7:
             break
         failed_attempts.append(
             f"試行{attempt}: Q={qa['question'][:40]}… → {reviewed['reason']}"
@@ -180,6 +202,15 @@ async def start_game(ctx, puzzle_id: int):
         await _do_auto_generate(ctx.channel)
     else:
         await _do_start_game(ctx.channel, puzzle_id)
+
+
+@bot.command(name="中断")
+async def cancel_generate(ctx):
+    if ctx.channel.id not in _generating_channels:
+        await ctx.send("現在、自動作問は進行していません。")
+        return
+    _cancel_requested.add(ctx.channel.id)
+    await ctx.send("⏳ 現在の作問が完了次第、自動作問を中断します...")
 
 
 @bot.command(name="ヒント")
@@ -323,6 +354,7 @@ async def help_command(ctx):
         "`!採点 <推理>` — 到達度＋わかっていることを詳しく確認\n"
         "`!答え合わせ` — 真相を表示してゲーム終了\n"
         "`!終了` — ゲームを中断\n"
+        "`!中断` — 自動作問をキャンセル\n"
         "`!help` — このコマンド一覧を表示"
     )
 
