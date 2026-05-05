@@ -29,9 +29,11 @@ async def _do_auto_generate(channel: discord.TextChannel) -> None:
 
     puzzles = gs.load_puzzles_raw()
     reviewed: dict | None = None
-    previous_feedback: str | None = None
+    failed_attempts: list[str] = []
 
     for attempt in range(1, 11):
+        previous_feedback = "\n".join(failed_attempts) if failed_attempts else None
+
         t0 = time.time()
         async with channel.typing():
             try:
@@ -56,7 +58,9 @@ async def _do_auto_generate(channel: discord.TextChannel) -> None:
 
         if score >= 9:
             break
-        previous_feedback = reviewed.get("reason", "")
+        failed_attempts.append(
+            f"試行{attempt}: Q={qa['question'][:40]}… → {reviewed['reason']}"
+        )
     else:
         await channel.send("❌ 10回試行しましたが、基準を満たす問題を生成できませんでした。")
         return
