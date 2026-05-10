@@ -14,6 +14,16 @@ Claude APIをゲームマスターとして使い、質問への応答・進捗�
 | `puzzles/puzzles.json` | 問題データ |
 | `puzzles/knowledge_base.json` | ハルシネーション回避用ナレッジベース |
 
+### prompts.py を変更したとき
+
+`prompts.py` の作問・校閲・出題準備プロンプトを変更した場合、対応する skill も同期すること。
+
+| 変更した関数 | 同期先 skill |
+|---|---|
+| `build_quiz_generator_prompt` | `.claude/skills/gen-quiz/SKILL.md` |
+| `build_quiz_reviewer_prompt` | `.claude/skills/review-quiz/SKILL.md` |
+| `build_quiz_preparer_prompt` | `.claude/skills/prep-quiz/SKILL.md` |
+
 ---
 
 ## 問題の追加手順

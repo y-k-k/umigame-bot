@@ -11,77 +11,13 @@ Claude Code 上で直接作問した場合と比べて品質（校閲スコア�
 
 ## Claude Code vs API の品質差の根本原因
 
-Claude Code 上での直接生成は 2 回目で 9 点を達成（「鍵師の男は開けられなくて満足」）。
-API では同条件で 5〜8 点が続く。同じモデル（claude-sonnet-4-6）を使っているにもかかわらず差が出る理由：
-
-| 要因 | Claude Code | Claude API |
-|---|---|---|
-| 既存問題のコンテキスト | question/answer/elements/hint 全フィールドをリアルタイムで Read | question/answer のみ（改善済: elements も渡すよう変更）|
-| 設計原則の参照 | CLAUDE.md・docs/puzzle-addition.md が常にコンテキストに乗る | プロンプトに埋め込んだ範囲のみ |
-| 出力形式の自由度 | 自然言語で考えてからファイルに書き込む | JSON 直出力強制（改善済: CoT → json ブロック形式）|
-| 推論の深さ | 制限なし | max_tokens=1024（改善済: thinking=10000, max_tokens=12000）|
-| **失敗パターンの蓄積** | 会話履歴として全失敗例を保持 | 直前 1 回の reason のみ（改善済: 累積履歴を渡す）|
-
-最後の「失敗パターンの蓄積」が最も本質的な差。Claude Code では過去の失敗（「催眠術師は予測しやすい」「睡眠テーマが繰り返されている」など）が会話履歴として染み込んでいるが、API は各呼び出しが独立している。
-
----
-
-## これまでに実施した改善
-
-### 1. Extended Thinking の有効化（`claude_client.py`）
-
-```python
-# before
-model="claude-sonnet-4-6",
-max_tokens=1024,
-
-# after
-model="claude-sonnet-4-6",
-max_tokens=12000,
-thinking={"type": "enabled", "budget_tokens": 10000},
-```
-
-JSON 直出力前にモデルが内部で深く推論できるようにした。
-レスポンスが `[ThinkingBlock, TextBlock]` になるため、content ループで TextBlock を取り出す処理も追加。
-
-### 2. 作問プロンプトにインライン CoT を追加（`prompts.py`）
-
-JSON 直出力から「確認コメント → \`\`\`json ブロック」形式に変更。
-既存の `_parse_json` が \`\`\`json ブロックを正規表現で抜き出す実装のため、呼び出し側は無変更。
-
-```
-出力前に以下を1行ずつ確認し、確認コメントを書いてから ```json ブロックで出力してください：
-1. 全ての言葉が文字通りの意味か（語の置き換えになっていないか）
-2. 「場面の違い」構造になっているか
-3. 答えが一意に特定できるか
-4. question の各描写が answer の場面で矛盾なく実際に起こりうるか
-5. 問題文のキーワードから答えへ2ステップ以内で辿り着けないか
-```
-
-### 3. 既存問題の elements/hint 構造をプロンプトに追加（`prompts.py`）
-
-生成プロンプトの examples に elements を含める `_format_puzzle_example` ヘルパーを追加。
-「entry point → core の段階的誘導」という設計原則も説明文として追記。
-
-### 4. 禁止パターンに 2 項目追加（`prompts.py`）
-
-実際のログから観察されたパターンを禁止リストに追加：
-
-```
-- 職業の意外性だけで解ける構造：「実は〇〇という職業だった」だけで謎が解ける場合は7点以下になりやすい
-- テーマの重複：既存の例に登場するテーマ（睡眠・催眠・食べ物・乗り物・学校など）をそのまま使わないこと
-```
-
-### 5. 失敗履歴の累積渡し（`bot.py`）
-
-```python
-# before: 直前1回の reason のみ
-previous_feedback = reviewed.get("reason", "")
-
-# after: 同セッション内の全失敗を累積
-failed_attempts.append(f"試行{attempt}: Q={qa['question'][:40]}… → {reviewed['reason']}")
-previous_feedback = "\n".join(failed_attempts) if failed_attempts else None
-```
+| 要因 | 現在の対応状況 |
+|---|---|
+| 既存問題のコンテキスト | question/answer/elements/hint 全フィールドを渡している |
+| 出力形式の自由度 | CoT → \`\`\`json ブロック形式に変更済み |
+| 推論の深さ | Extended Thinking（budget_tokens=10000）有効化済み |
+| 失敗パターンの蓄積 | 同セッション内の全失敗を質問文全文+理由で累積渡し |
+| 設計原則の参照 | プロンプトに埋め込んだ範囲のみ（API の根本的な制約） |
 
 ---
 
@@ -92,48 +28,72 @@ previous_feedback = "\n".join(failed_attempts) if failed_attempts else None
 | パターン | 代表例 | 原因 |
 |---|---|---|
 | 職業の意外性のみ | 睡眠導入セラピー・催眠術師・クラッシュテスト担当者・実験助手 | 「実は〇〇という職業」で解ける構造は連想しやすい |
-| テーマの繰り返し | 睡眠関連が 3 回連続 | 失敗履歴が蓄積されないため同テーマに戻る |
 | question と answer の矛盾 | 「腕をつかまれる」≠「協力的に引き渡す」でスコア 5 | 自己チェック不足 |
-| 2 ステップ連想 | 「壇上で話す→観客が眠る」→催眠術師 | 予測しやすさのチェックがなかった |
+| 専門知識必須 | 三椏の踏み込み工程・凹版彫刻師の原版裁断・棟梁の独立式 | 業界固有の慣習・工程を知らないと質問が詰まる |
+| 事実誤認 | 108を逆さまに読むと180（実際は801） | 前提が物理的に成立しない |
+| 存在レア | 砂浜ごと屋内に収めた施設 | 一般的でない施設を前提とする |
 
 ### 校閲スコアの基準（`build_quiz_reviewer_prompt`）
 
 - **9〜10 点**: 問題文の描写が全て正確、答えを知った後「確かに」と完全に納得、一意性高い
-- **7〜8 点**: 語の置き換えが若干強引、推測しやすい、一意性やや弱い
-- **5〜6 点**: 論理の飛躍、不自然な設定、複数の偶然の重なり
+- **8 点**: 構造は成立、欠点は 1 つのみ
+- **7 点**: 欠点が 2 つ以上、または語の置き換えが謎の中心で強引さが際立つ
+- **5〜6 点**: 論理の飛躍、事実誤認、存在レア、専門知識必須、複数の偶然の重なり
 - **4 点以下**: 謎として成立しない、答えが複数考えられる
-
-**※ 7 点と 8 点の区別基準がプロンプトに存在しない（採点揺らぎの原因）**
 
 ---
 
 ## 残課題
 
-### 優先度 高
-
-1. **校閲プロンプトの 7/8 点区別基準の追加**
-   - 現状 `7〜8点` が同一の説明にまとめられており、同じ問題を2回評価すると結果が変わる可能性がある
-   - 案: 欠点が 1 つ → 8 点、複数または語の置き換えが強引 → 7 点
-
-2. **生成プロンプトの「予測しにくさ」チェックの強化**
-   - 自己チェック 5 番目は追加済みだが、具体例が「催眠術師」1 例のみ
-   - 低評価だった実際の問題例を禁止パターンに加えていくと効果的
-
 ### 優先度 中
 
-3. **生成プロンプトの「物・場所・状況の誤解」パターン例を増やす**
+1. **生成プロンプトの「物・場所・状況の誤解」パターン例を増やす**
    - 現状の具体例は献血車・棒アイス・囚人の漢字の 3 例
    - 高評価パターン（物の種類違い・場所違い・状況違い）をカテゴリ別に示す
 
-4. **作問→校閲の試行回数を設定可能にする**
-   - 現状ハードコードで 10 回上限（`bot.py:34`）
+2. **作問→校閲の試行回数を設定可能にする**
+   - 現状ハードコードで 10 回上限（`bot.py:51`）
    - コマンド引数や設定で変更できると運用しやすい
 
 ### 優先度 低
 
-5. **Extended Thinking のコスト最適化**
+3. **Extended Thinking のコスト最適化**
    - `budget_tokens=10000` は毎回課金される
    - スコアが低い問題の特徴（テーマ重複など）を事前にフィルタできれば thinking コストを削減できる
+
+---
+
+## solverエージェントによる解かれやすさ評価
+
+校閲スコアは「問題の構造的な正しさ」を測るが、「実際に解けるか」は別の指標が必要。
+`quiz-gm`（出題者）と `solve-quiz`（回答者）を交互実行し、AIが実際にゲームをプレイすることで解かれやすさを定量評価する。
+
+詳細設計: @docs/solver-agent.md
+
+### 採点指標
+
+| 指標 | 閾値 | 意味 |
+|---|---|---|
+| `questions_used < 10` | 簡単すぎ | entry point が明白すぎる可能性 |
+| `questions_used > 30` | 解けない | ヒント設計が困難な構造の可能性 |
+| `coverage_pct < 50%` | 到達困難 | 核心要素に辿り着けない構造 |
+| `coverage_pct == 100%` | 理想的 | 全要素到達 |
+
+### 目標とする採用パイプライン
+
+```
+gen-quiz → review-quiz（スコア≥9）→ solve-quiz（10〜30問で全要素到達）→ 採用
+```
+
+### 実装状況
+
+| ステップ | 状態 |
+|---|---|
+| quiz-gm / solve-quiz スキルの実装（インタラクティブ用） | 完了 |
+| quiz-battle Docker 分離環境の実装 | 完了（`quiz_battle/` ディレクトリ） |
+| 既存問題でのフルフロー動作確認 | 完了（id:1 で 22問・全要素到達を確認） |
+| score_result → gen-quiz フィードバック変換ロジック | 未実装 |
+| 作問パイプラインへの統合 | 未実装 |
 
 ---
 
@@ -141,7 +101,14 @@ previous_feedback = "\n".join(failed_attempts) if failed_attempts else None
 
 | ファイル | 役割 |
 |---|---|
-| `bot.py:27-101` | `_do_auto_generate` — 作問ループの実装 |
+| `bot.py:44-110` | `_run_auto_generate` — 作問ループの実装 |
 | `claude_client.py:68-79` | `generate_quiz` — Extended Thinking 呼び出し |
-| `prompts.py:98-164` | `build_quiz_generator_prompt` — 生成プロンプト |
-| `prompts.py:163-205` | `build_quiz_reviewer_prompt` — 校閲プロンプト |
+| `prompts.py:113-165` | `build_quiz_generator_prompt` — 生成プロンプト |
+| `prompts.py:168-199` | `build_quiz_reviewer_prompt` — 校閲プロンプト |
+| `.claude/skills/gen-quiz/SKILL.md` | `/gen-quiz` スキル（作問ステップ単体実行） |
+| `.claude/skills/review-quiz/SKILL.md` | `/review-quiz` スキル（校閲ステップ単体実行） |
+| `.claude/skills/quiz-gm/SKILL.md` | `/quiz-gm` スキル（出題者エージェント） |
+| `.claude/skills/solve-quiz/SKILL.md` | `/solve-quiz` スキル（回答者エージェント） |
+| `puzzles/quiz_session.json` | 実行中セッションの公開情報（GM・solver 共有） |
+| `.claude/quiz_session_gm.json` | 実行中セッションの GM 専用情報（answer・elements） |
+| `docs/solver-agent.md` | solver エージェントの詳細設計 |

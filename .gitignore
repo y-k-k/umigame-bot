@@ -8,6 +8,8 @@ build/
 venv/
 puzzles/puzzles.json
 puzzles/knowledge_base.json
+*.json
+results/
 issues/
 .claude/
 CLAUDE.private.md

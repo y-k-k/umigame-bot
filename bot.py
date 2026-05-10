@@ -80,7 +80,7 @@ async def _run_auto_generate(channel: discord.TextChannel) -> None:
         if score >= 7:
             break
         failed_attempts.append(
-            f"試行{attempt}: Q={qa['question'][:40]}… → {reviewed['reason']}"
+            f"試行{attempt}: Q={qa['question']} → {reviewed['reason']}"
         )
     else:
         await channel.send("❌ 10回試行しましたが、基準を満たす問題を生成できませんでした。")

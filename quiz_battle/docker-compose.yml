@@ -1,0 +1,41 @@
+services:
+  gm-api:
+    build:
+      context: ..
+      dockerfile: quiz_battle/gm_api/Dockerfile
+    volumes:
+      - ${CLAUDE_DIR}:/root/.claude:ro   # Claude Code 認証情報（API KEY 不要）
+      - ../puzzles:/app/puzzles
+      - ../.claude:/app/.claude
+    environment:
+      - SERVER_PORT=8001
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 100s
+      timeout: 5s
+      retries: 5
+
+  solver-api:
+    build:
+      context: ..
+      dockerfile: quiz_battle/solver_api/Dockerfile
+    volumes:
+      - ${CLAUDE_DIR}:/root/.claude:ro   # Meridian バックエンド使用時に必要
+      - ../.claude/skills/solve-quiz:/app/.claude/skills/solve-quiz:ro
+    environment:
+      - SERVER_PORT=8002
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.6:27b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-27000}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      - OPENROUTER_TIMEOUT=${OPENROUTER_TIMEOUT:-120}
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 100s
+      timeout: 5s
+      retries: 5
