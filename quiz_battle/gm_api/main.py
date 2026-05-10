@@ -21,6 +21,7 @@ SESSION_FILE = APP_DIR / "puzzles" / "quiz_session.json"
 GM_FILE = APP_DIR / ".claude" / "quiz_session_gm.json"
 
 _meridian = anthropic.AsyncAnthropic(api_key="unused", base_url="http://127.0.0.1:3456")
+MERIDIAN_MODEL = os.getenv("MERIDIAN_MODEL", "claude-sonnet-4-6")
 
 _KEEPALIVE_INTERVAL = 180  # 3分ごとに ping
 
@@ -67,6 +68,7 @@ async def _meridian_keepalive() -> None:
             print(f"[keep-alive] ping failed: {e} — Meridian再起動", flush=True)
             await _restart_meridian()
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_meridian_keepalive())
@@ -86,7 +88,7 @@ async def ask_claude(system: str, user: str) -> str:
     for attempt in range(1, 4):
         try:
             response = await _meridian.messages.create(
-                model="claude-sonnet-4-6",
+                model=MERIDIAN_MODEL,
                 max_tokens=4096,
                 system=system,
                 messages=[{"role": "user", "content": user}],

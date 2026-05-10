@@ -20,6 +20,8 @@ OLLAMA_URL     = os.getenv("OLLAMA_URL",     "http://host.docker.internal:11434"
 OLLAMA_MODEL   = os.getenv("OLLAMA_MODEL",   "qwen3:14b-q4_K_M")
 OLLAMA_TIMEOUT = float(os.getenv("OLLAMA_TIMEOUT", "27000"))
 
+MERIDIAN_MODEL     = os.getenv("MERIDIAN_MODEL",     "claude-sonnet-4-6")
+
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL   = os.getenv("OPENROUTER_MODEL",   "qwen/qwen3.6-plus-preview:free")
 OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "120"))
@@ -37,7 +39,7 @@ async def ask_llm(system: str, user: str, backend: str, model: str = "") -> str:
 
 async def _ask_meridian(system: str, user: str) -> str:
     response = await _meridian.messages.create(
-        model="claude-sonnet-4-6",
+        model=MERIDIAN_MODEL,
         max_tokens=4096,
         system=system,
         messages=[{"role": "user", "content": user}],

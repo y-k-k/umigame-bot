@@ -9,6 +9,7 @@ services:
       - ../.claude:/app/.claude
     environment:
       - SERVER_PORT=8001
+      - MERIDIAN_MODEL=${MERIDIAN_MODEL:-claude-sonnet-4-6}
     ports:
       - "8001:8001"
     healthcheck:
@@ -29,8 +30,9 @@ services:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-qwen3.6:27b}
       - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-27000}
+      - MERIDIAN_MODEL=${MERIDIAN_MODEL:-claude-sonnet-4-6}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-qwen/qwen3.6-plus-preview:free}
       - OPENROUTER_TIMEOUT=${OPENROUTER_TIMEOUT:-120}
     ports:
       - "8002:8002"
