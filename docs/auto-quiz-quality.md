@@ -66,23 +66,25 @@ Claude Code 上で直接作問した場合と比べて品質（校閲スコア�
 ## solverエージェントによる解かれやすさ評価
 
 校閲スコアは「問題の構造的な正しさ」を測るが、「実際に解けるか」は別の指標が必要。
-`quiz-gm`（出題者）と `solve-quiz`（回答者）を交互実行し、AIが実際にゲームをプレイすることで解かれやすさを定量評価する。
+quiz-battle システムが出題者（gm-api）と回答者（solver-api）を自動で交互実行することで解かれやすさを定量評価する。
 
-詳細設計: @docs/solver-agent.md
+詳細設計: @docs/solver-agent.md ／ @docs/quiz-battle.md
 
 ### 採点指標
 
-| 指標 | 閾値 | 意味 |
-|---|---|---|
-| `questions_used < 10` | 簡単すぎ | entry point が明白すぎる可能性 |
-| `questions_used > 30` | 解けない | ヒント設計が困難な構造の可能性 |
-| `coverage_pct < 50%` | 到達困難 | 核心要素に辿り着けない構造 |
-| `coverage_pct == 100%` | 理想的 | 全要素到達 |
+| 指標 | 意味 |
+|---|---|
+| `questions_used < 10` | 簡単すぎ — entry point が明白すぎる可能性 |
+| `questions_used > max_questions` | 解けない — ヒント設計が困難な構造の可能性 |
+| `coverage_pct < 100%` | 核心未到達 — `uncovered` の要素が不可解／到達困難 |
+| `coverage_pct == 100%` | 全要素到達（PASS 条件） |
+
+`max_questions` のデフォルトは 100。問題の難度想定や solver 性能に応じて `--max-questions` でチューニングする。
 
 ### 目標とする採用パイプライン
 
 ```
-gen-quiz → review-quiz（スコア≥9）→ solve-quiz（10〜30問で全要素到達）→ 採用
+gen-quiz → review-quiz（スコア≥9）→ quiz-battle（全要素到達）→ 採用
 ```
 
 ### 実装状況
@@ -91,7 +93,10 @@ gen-quiz → review-quiz（スコア≥9）→ solve-quiz（10〜30問で全要�
 |---|---|
 | quiz-gm / solve-quiz スキルの実装（インタラクティブ用） | 完了 |
 | quiz-battle Docker 分離環境の実装 | 完了（`quiz_battle/` ディレクトリ） |
-| 既存問題でのフルフロー動作確認 | 完了（id:1 で 22問・全要素到達を確認） |
+| Solver の推論プロトコル整備（5ステップ / FRAME_SHIFT / FALLBACK / pre_submit_check） | 完了 |
+| OpenRouter バックエンド追加 | 完了 |
+| クラッシュ耐性（Meridian 自動再起動 + orchestrator レジューム） | 完了 |
+| 既存問題でのフルフロー動作確認 | 完了（id:1 / id:4 で全要素到達、id:10 で核心 75% 到達） |
 | score_result → gen-quiz フィードバック変換ロジック | 未実装 |
 | 作問パイプラインへの統合 | 未実装 |
 
@@ -101,14 +106,17 @@ gen-quiz → review-quiz（スコア≥9）→ solve-quiz（10〜30問で全要�
 
 | ファイル | 役割 |
 |---|---|
-| `bot.py:44-110` | `_run_auto_generate` — 作問ループの実装 |
-| `claude_client.py:68-79` | `generate_quiz` — Extended Thinking 呼び出し |
-| `prompts.py:113-165` | `build_quiz_generator_prompt` — 生成プロンプト |
-| `prompts.py:168-199` | `build_quiz_reviewer_prompt` — 校閲プロンプト |
+| `bot.py` | `_run_auto_generate` — 作問ループの実装 |
+| `claude_client.py` | `generate_quiz` — Extended Thinking 呼び出し |
+| `prompts.py` | `build_quiz_generator_prompt` / `build_quiz_reviewer_prompt` ほか |
+| `quiz_battle/orchestrator.py` | quiz-battle 制御ロジック（`run_battle` / CLI） |
+| `quiz_battle/gm_api/main.py` | GM API サーバー |
+| `quiz_battle/solver_api/main.py` | Solver API サーバー |
 | `.claude/skills/gen-quiz/SKILL.md` | `/gen-quiz` スキル（作問ステップ単体実行） |
 | `.claude/skills/review-quiz/SKILL.md` | `/review-quiz` スキル（校閲ステップ単体実行） |
-| `.claude/skills/quiz-gm/SKILL.md` | `/quiz-gm` スキル（出題者エージェント） |
-| `.claude/skills/solve-quiz/SKILL.md` | `/solve-quiz` スキル（回答者エージェント） |
+| `.claude/skills/quiz-gm/SKILL.md` | `/quiz-gm` スキル（出題者エージェント、インタラクティブ用） |
+| `.claude/skills/solve-quiz/SKILL.md` | `/solve-quiz` スキル（回答者エージェント、インタラクティブ用） |
 | `puzzles/quiz_session.json` | 実行中セッションの公開情報（GM・solver 共有） |
 | `.claude/quiz_session_gm.json` | 実行中セッションの GM 専用情報（answer・elements） |
 | `docs/solver-agent.md` | solver エージェントの詳細設計 |
+| `docs/quiz-battle.md` | quiz-battle システム全体の設計 |

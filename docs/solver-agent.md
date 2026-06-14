@@ -1,103 +1,181 @@
-# solverエージェント — 自動作問品質改善サブタスク
+# solver エージェント
 
 ## 目的
 
-`quiz-gm`（出題者）と `solve-quiz`（回答者）の2エージェントを交互に実行し、
-AIが実際にゲームを解く過程を通じて作問品質を定量評価する。
-
-**位置づけ**: `docs/auto-quiz-quality.md` に記録されている校閲スコア（`build_quiz_reviewer_prompt`）だけでは「解かれやすさ」は測れない。solverが実際に解いてみることで「解けるが難しい」問題と「そもそも解けない問題」を区別する指標を加える。
+ウミガメのスープを「実際に解く側」の AI。出題者（GM）と対話して質問を生成し、最終的に真相を提出する。
+`gm-api` と組み合わせて [quiz-battle](./quiz-battle.md) を構成し、作問品質の「解かれやすさ」評価を行う。
 
 ---
 
-## 実装済み
+## 二つの実装
 
-### スキル
-
-| スキル | ファイル | 役割 |
+| | API サーバー版 | Claude Code スキル版 |
 |---|---|---|
-| `quiz-gm` | `.claude/skills/quiz-gm/SKILL.md` | 出題者。init/回答/採点の3モードで動作 |
-| `solve-quiz` | `.claude/skills/solve-quiz/SKILL.md` | 回答者。問題文とQ&Aログだけを見て質問を生成 |
+| 場所 | `quiz_battle/solver_api/main.py` | `.claude/skills/solve-quiz/SKILL.md` |
+| 役割 | quiz-battle（自動評価）の Solver | インタラクティブにユーザーが回す動作確認用 |
+| 状態管理 | ステートレス（リクエストで qa_log を受け取る） | `puzzles/quiz_session.json` を読み書き |
+| LLM | ollama / meridian / openrouter から選択 | Claude Code（呼び出し元） |
+| 利用される文脈 | バトル自動実行 | スキル単体での手動検証 |
 
-### セッションファイル
+以下は **API サーバー版** の仕様を主に記載する。スキル版は `.claude/skills/solve-quiz/SKILL.md` を参照。
 
-| ファイル | 公開範囲 | 内容 |
+---
+
+## API エンドポイント
+
+```
+POST /questions          次の質問セットを生成
+POST /pre_submit_check   提出前の最終確認質問を生成
+POST /submit             最終理論を作文
+GET  /health             ヘルスチェック
+```
+
+すべて `SessionState` を JSON ボディで受け取り、ステートレスに応答する。
+solver は `puzzles.json` も `answer` も `elements` も読まないため、GM のプライベート情報に物理的にアクセスできない。
+
+### SessionState
+
+| フィールド | 用途 |
+|---|---|
+| `puzzle_id` | ログ識別用 |
+| `question` | 問題文 |
+| `qa_log` | これまでの Q&A 全件（`[{"q": ..., "a": ...}]`） |
+| `backend` | `"ollama"` / `"meridian"` / `"openrouter"` |
+| `model` | 空のときは backend ごとの環境変数を使用 |
+| `retry_count` | `/questions` が空応答した連続回数（orchestrator が管理） |
+| `stagnant_rounds` | 真相究明度が過去最大を更新しなかった連続回数（orchestrator が管理） |
+
+---
+
+## 推論プロンプトの三系統
+
+`/questions` 呼び出しごとに `retry_count` と `stagnant_rounds` を見て、以下のいずれかのプロンプトに切り替わる:
+
+| 条件 | プロンプト | 狙い |
 |---|---|---|
-| `puzzles/quiz_session.json` | GM・solver 両方が読み書き | question, qa_log, pending_questions, theory, status |
-| `.claude/quiz_session_gm.json` | GMのみ | answer, elements, knowledge_base |
+| `retry_count >= 1` | `_FALLBACK_QUESTIONS_SYSTEM` | チェーン生成が破綻したので基本要素チェックに退避 |
+| `stagnant_rounds >= 3` | `_FRAME_SHIFT_SYSTEM` | 現フレームに袋小路。前提を疑い視点転換 |
+| それ以外 | `_QUESTIONS_SYSTEM` | 通常モード（5ステップ推論） |
 
-GM ファイルを `puzzles/` 外の `.claude/` に配置し、solve-quiz SKILL.md からはパスを一切記載しないことで、solverがファイルの存在を知る手がかりを与えない設計にしている。
+### 通常モード（5ステップ推論）
 
----
+1. **中心行動 C の特定** — 「なぜ〜したのか」の核となる行動を 1 つ特定
+2. **矛盾の列挙** — 問題文・Q&A・常識間の同時成立しない命題ペアを挙げる
+3. **矛盾の分類** — 「これがないと C を説明できない」核心的矛盾 vs 周辺的矛盾
+4. **説明仮説チェーンの生成** — 「背景 → きっかけ → 行動 C」を基本形に 3〜6 要素
+5. **質問の生成** — チェーン各要素を検証する Yes/No 質問 3〜5 個
 
-## 手動実行フロー
+#### 質問生成の禁則
 
-```
-# 1. セッション初期化（puzzles.jsonのidを指定 or draftで自動作問結果を使用）
-/quiz-gm init <id>
-/quiz-gm init draft
+- 「〜ですか、それとも〜ですか？」のような複合質問は禁止
+- Q&A ログにある質問と同義の質問は禁止
+- 固有の数値・品名・細部の例は、その上位カテゴリが Yes 確認された後のみ
 
-# 2. 回答エージェントが質問を生成（3〜5問）
-/solve-quiz
+### 真相究明度（comprehension）の自己評価
 
-# 3. 出題エージェントが回答（はい/いいえ/関係ありません/どちらともいえません）
-/quiz-gm
+`真相究明度 = 裏付け済み要素数 ÷ チェーン全要素数`
 
-# 2〜3を繰り返す（目安: 10〜30ターン）
+- **裏付け済み** = Q&A の「はい」回答が根拠にあり、根拠の Q 番号を付記できる要素
+- **未検証** = もっともらしい推測でも、Q 番号を付記できない要素
+- 「行動 C の直接の理由」に当たる要素が未検証の間は上限 0.6
 
-# 4. solver が最終理論を確定
-/solve-quiz submit
+主観評価を「Q 番号引用」という機械的作業に置き換えているため、Solver モデルの性能に依存しにくい。
 
-# 5. GMが採点
-/quiz-gm score
-```
+### FALLBACK モード
 
-### セッション状態遷移
+通常モードのチェーン生成が破綻し空応答が出た直後に発動。
+仮説チェーンを諦め、基本要素（登場人物・時代・地域・物品カテゴリなど）を素朴に確認することで進行を再開する。
 
-```
-in_progress → theory_submitted → scored
-```
+### FRAME_SHIFT モード
 
----
+`stagnant_rounds >= 3` で発動。
+プロンプトが Solver に以下を強制する:
 
-## 採点結果のフォーマット（quiz_session.json に保存）
+1. これまで「いいえ／関係ありません」が集中した方向を**禁止リスト**化
+2. 問題文のキーワードに**別の語義**を当て、別解釈を 1 つ以上挙げる
+   （対人的目的・時間の前後関係・主語や対象の取り違えなど）
+3. 未検討の解釈から**新しい仮説チェーン**を作る
+4. 禁止リスト方向と既出質問を除外して質問を生成
 
-```json
-{
-  "status": "scored",
-  "score_result": {
-    "covered": ["A", "B", "B1"],
-    "uncovered": ["C1", "E"],
-    "coverage_pct": 60,
-    "questions_used": 18
-  }
-}
-```
+実例: puzzle 4（ポイ捨てする男）で `stagnant_rounds=3` を達成して発動 → 「熱湯」キーワードに到達 → 「カップ焼きそば」「湯切り」を経て 100% 到達。
+発動時に `[SOLVER] FRAME_SHIFT発動 (stagnant_rounds=N)` が標準出力に出る。
 
 ---
 
-## 次のステップ
+## 提出前チェック
 
-### 優先度 高
+`/pre_submit_check` は別プロンプトで動作する:
 
-1. **動作確認** — 既存問題（id:1〜3）でフルフローを1回実行し、GMの回答精度とsolverの質問戦略を評価する
+1. 問題文の不可解な点（「なぜ〜なのか」に当たる部分）を全て列挙
+2. 各点について Q&A の「はい」回答だけを根拠に 1 行説明を書く。Q 番号付記、推測補完は ［推測］ と明記
+3. ［推測］が残れば、それを検証する Yes/No 質問を最大 3 問生成
+4. 答えが「はい」でも「いいえ」でも本筋が変わらない質問・既出と同義の質問は破棄
 
-2. **フィードバック指標の定義** — score_result から gen-quiz への feedback 文字列を生成するロジックを決める
+`[推測]` ゼロで全ての不可解点が説明できる場合だけ空リストを返す。
+追加質問があれば orchestrator が GM に答えさせて qa_log を補完してから submit する。
 
-   | 指標 | 閾値 | フィードバック例 |
-   |---|---|---|
-   | `questions_used < 10` | 簡単すぎ | 「10問以内で解かれた。entry pointが明白すぎる可能性」 |
-   | `questions_used > 30` | 解けない | 「30問超えても未解決。ヒント設計が困難な構造の可能性」 |
-   | `coverage_pct < 50%` | 到達困難 | 「核心要素に到達できなかった：[E]」 |
-   | `coverage_pct == 100%` | 理想的 | 「全要素到達：質問数〇問」 |
+---
 
-3. **gen-quiz との統合** — `auto-quiz-quality.md` の改善サイクルに solver スコアを追加する
+## /submit（最終理論の作文）
 
-   現在のサイクル: `gen-quiz → review-quiz (スコア≥9で採用)`
-   目標サイクル: `gen-quiz → review-quiz (≥9) → solve-quiz (10〜30問で全要素到達) → 採用`
+問題文と qa_log を踏まえ、200 文字以内で真相を作文する。
+出力は `{"theory": "..."}` の JSON のみ。
 
-### 優先度 低
+---
 
-4. **quiz-battle スキル** — GM・solver の交互実行を自動化するオーケストレーターを作成（Agent toolを使用）
+## 出力フォーマット
+
+`/questions` の応答は JSON のみで終わるが、JSON の前に推論セクションを出力する。
+orchestrator は標準出力で `[SOLVER REASONING]` ヘッダ付きでこれを表示する:
+
+```
+【確認済みの事実】 - ...
+【除外された仮説】 - ...
+【検出された矛盾リスト】 矛盾1: ... 核心的
+【不足している中間ステップ】 1. ...
+【説明仮説チェーン（現在の推測）】
+  1. 要素の内容（裏付け=Q3）
+  2. 要素の内容（未検証）
+  ...
+{"pending_questions": [...], "comprehension": 0.65}
+```
+
+`【説明仮説チェーン】` 行には必ず `（裏付け=Q番号）` か `（未検証）` の注記が付く。
+これが付いていないチェーンが出てきた場合、プロンプトが正しく機能していない（要調整）のサイン。
+
+---
+
+## バックエンド選択
+
+| backend | 認証手段 | 想定モデル |
+|---|---|---|
+| `ollama` | ローカル Ollama | qwen3:14b など軽量モデル（デフォルト: `qwen3:14b-q4_K_M`） |
+| `meridian` | `~/.claude` の Claude Code OAuth | claude-sonnet-4-6（環境変数 `MERIDIAN_MODEL`） |
+| `openrouter` | `OPENROUTER_API_KEY` | 任意の OpenRouter モデル（free 含む） |
+
+OpenRouter 呼び出しは 429（レート制限）で最大 10 回まで自動リトライする。
+パース失敗時もリトライ対象。
+
+---
+
+## 設計上の決定
+
+### Solver の isolation（情報非対称の保証）
+
+- solver-api コンテナに `.claude/` を**マウントしない**
+- `quiz_session_gm.json`（answer・elements）には物理的にアクセス不可
+- session state（question, qa_log）はすべて orchestrator がリクエストで渡す
+- **ステートレス**なので volume も不要
+
+### 主観評価ではなく裏付け率
+
+旧仕様は「矛盾を説明できたか」を Solver に主観判定させていたが、仮説を立てた時点で「説明済み」と扱われやすく、究明度が早期にインフレして早期 submit が頻発した。
+現仕様は「Q 番号引用」という機械的作業を強制し、主観に依存しないようにしている。
+
+### FRAME_SHIFT の存在意義
+
+長尺の Q&A ログを積んでいくと、Solver は「これまでの仮説の延長線上」にしか質問を出せなくなりやすい。
+明示的に**禁止リスト → 再解釈 → 新チェーン**のサイクルを強制することで、stagnant 状態からの脱出口を作っている。
 
 ---
 
@@ -105,8 +183,9 @@ in_progress → theory_submitted → scored
 
 | ファイル | 役割 |
 |---|---|
-| `docs/auto-quiz-quality.md` | 作問品質改善の全体ログ（このサブタスクの親） |
-| `.claude/skills/quiz-gm/SKILL.md` | 出題者スキル定義 |
-| `.claude/skills/solve-quiz/SKILL.md` | 回答者スキル定義 |
-| `puzzles/quiz_session.json` | 実行中セッションの公開情報（solver が読む） |
-| `.claude/quiz_session_gm.json` | 実行中セッションのGM専用情報（answer・elements） |
+| `quiz_battle/solver_api/main.py` | Solver API 本体 |
+| `quiz_battle/backends.py` | バックエンドのデフォルトモデル定義 |
+| `quiz_battle/orchestrator.py` | GM と交互呼び出しを担うバトル制御 |
+| `.claude/skills/solve-quiz/SKILL.md` | インタラクティブ版 Solver スキル |
+| `docs/quiz-battle.md` | quiz-battle システム全体の設計 |
+| `docs/auto-quiz-quality.md` | 自動作問品質改善の親ログ |

@@ -100,24 +100,45 @@ quiz-battle の用途（解かれやすさ評価）では問題なし。
 | session state をリクエストで渡す（ステートレス設計） | ファイルマウント自体が不要 |
 | `quiz_session_gm.json` を `puzzles/` 外の `.claude/` に配置 | ファイル名を知っていてもパスが推測困難 |
 
+### 5. クラッシュ耐性
+
+長時間バトル中の障害に備えて以下を備える:
+
+| 機構 | 場所 | 効果 |
+|---|---|---|
+| Meridian 認証 keep-alive | `gm_api/main.py` `_meridian_keepalive` | 3 分おきに 1 トークン ping。失敗時は `pkill -f meridian` で再起動して `~/.claude` を読み直す |
+| `procps` パッケージ | `gm_api/Dockerfile` | `pkill` を提供（slim イメージには含まれない） |
+| GM セッションの永続化 | `puzzles/quiz_session.json` をボリュームマウント | コンテナ再起動後もセッションが残る |
+| orchestrator レジューム | `quiz_battle/sessions/resume_<puzzle_id>.json` | GM /answer 直後・pre_submit 直後にチェックポイント。`--resume` で復帰 |
+
 ---
 
 ## 動作確認結果
 
-### id:1「ウミガメのスープ」（正答例）
+### id:1「ウミガメのスープ」
 
-```
-22問使用 → solver が全要素に到達
-主な質問戦略:
-  - 過去に同じスープを飲んだことがあるか → はい
-  - 遭難状態だったか → はい
-  - 仲間が死亡していたか → はい
-  - 以前のスープが人肉製だったか → はい（9問目でたどり着く）
-  - 本物のスープで正体を悟ったか → はい（12問目）
-  - 罪悪感が自殺の理由か → はい（14問目）
-```
+22 問使用、全要素到達。Solver は遭難状態 → 仲間の死 → 人肉スープの体験 → 罪悪感での自殺、を 14 問目までに掘り当てた。
 
-22問は採用基準（10〜30問）の範囲内。全要素到達。
+### id:10「最強ダイエット法」（solver=nvidia/nemotron-3-ultra-550b-a55b:free）
+
+| 項目 | 値 |
+|---|---|
+| 採用判定 | FAIL（75%、未到達=A「友人との勝負」） |
+| 使用質問数 | 38 問（早期 submit） |
+| 究明度推移 | 0 → 33 → 17 → 25 → 55 → 50 → 71 → 50 → 100% |
+
+「コンテストの初回計量前に増量」までは到達したが、A 要素「友人との勝負」を「減量コンテスト」に一般化したため A 落ち。
+
+### id:4「ポイ捨てする男」（solver=nvidia/nemotron-3-ultra-550b-a55b:free）
+
+| 項目 | 値 |
+|---|---|
+| 採用判定 | **PASS**（100%、全要素到達） |
+| 使用質問数 | 97 問 |
+| FRAME_SHIFT 発動 | Round 9（stagnant_rounds=3） |
+| クラッシュからのレジューム | Round 12 で gm-api 認証失効 → restart + `--resume` で復帰 |
+
+Round 9 の FRAME_SHIFT が「熱湯」キーワードに到達させ、Round 19-20 で「カップ焼きそば」「湯切り」を直撃で確定 → 最終理論で 100% カバレッジ達成。
 
 ---
 
@@ -126,7 +147,7 @@ quiz-battle の用途（解かれやすさ評価）では問題なし。
 ```
 gen-quiz
   → review-quiz（スコア≥9）
-  → quiz-battle（10〜30問で全要素到達）
+  → quiz-battle（全要素到達）
   → 採用
 ```
 
@@ -135,15 +156,20 @@ gen-quiz
 ```python
 @property
 def passed(self) -> bool:
-    return 10 <= self.questions_used <= 30 and self.coverage_pct == 100
+    return (
+        10 <= self.questions_used <= self.max_questions
+        and self.coverage_pct == 100
+    )
 
 @property
 def rejection_reason(self) -> str | None:
-    if self.questions_used < 10:  return "簡単すぎ"
-    if self.questions_used > 30:  return "難しすぎ / 解けない"
-    if self.coverage_pct < 100:   return f"核心未到達（{self.coverage_pct}%）"
+    if self.questions_used < 10:                return "簡単すぎ"
+    if self.questions_used > self.max_questions: return "難しすぎ / 解けない"
+    if self.coverage_pct < 100:                  return f"核心未到達（{self.coverage_pct}%、未到達: ...）"
     return None
 ```
+
+「簡単すぎ」の下限は 10 問固定、「難しすぎ」の上限は `max_questions`（デフォルト 100）。
 
 ---
 
@@ -169,11 +195,13 @@ python -m quiz_battle.orchestrator <puzzle_id> [options]
 | 引数 | 説明 | デフォルト |
 |---|---|---|
 | `puzzle_id` | puzzles.json の id（整数）または `"draft"` | — |
-| `--solver-backend` | `ollama` \| `meridian` | `ollama` |
+| `--solver-backend` | `ollama` \| `meridian` \| `openrouter` | `ollama` |
+| `--model` | 使用モデル名（省略時は backend ごとのデフォルト or solver 側の環境変数） | — |
 | `--max-questions N` | 最大質問数 | 100 |
 | `--lower-submit-threshold N` | この問数に達するまでは必ず質問を続ける | 20 |
 | `--upper-submit-threshold N` | この問数に達したら強制 submit | 100 |
 | `--comprehension-threshold F` | 真相究明度がこれ以上になれば早期 submit | 0.85 |
+| `--resume` | 同一 `puzzle_id` のレジューム状態があればクラッシュ位置から再開 | off |
 
 ```bash
 # Ollama（デフォルト）
@@ -182,7 +210,20 @@ python -m quiz_battle.orchestrator draft --max-questions 120
 
 # Meridian（session に余裕があるとき）
 python -m quiz_battle.orchestrator 1 --solver-backend meridian --max-questions 30 --upper-submit-threshold 30
+
+# OpenRouter（free 枠の大規模モデルなど）
+python -m quiz_battle.orchestrator 4 --solver-backend openrouter --model "nvidia/nemotron-3-ultra-550b-a55b:free"
+
+# クラッシュ後に同じ puzzle_id を途中から再開
+python -m quiz_battle.orchestrator 4 --solver-backend openrouter --model "..." --resume
 ```
+
+### レジュームの仕組み
+
+- orchestrator は GM `/answer` 直後と提出前チェック直後に `quiz_battle/sessions/resume_<puzzle_id>.json` を書き出す
+- `--resume` 起動時は同ファイルを読み、gm-api `/session` の `qa_log` と一致することを確認してから途中から再開
+- 一致しなければ警告ログを出して新規開始にフォールバック
+- 採点成功時にレジュームファイルを削除する（次回はデフォルトで新規開始）
 
 ---
 
@@ -210,10 +251,10 @@ if not result.passed:
 
 | 優先度 | タスク |
 |---|---|
-| 高 | 複数 id での動作確認（id:2, id:4 など） |
 | 高 | `rejection_reason` → `gen-quiz` フィードバック文字列の変換ロジック |
 | 高 | Discord bot の `_run_auto_generate` への統合 |
-| 中 | `submit_threshold` のチューニング（現在 20問） |
+| 中 | `lower_submit_threshold` のチューニング（現在 20問） |
+| 中 | GM の語彙厳密性チューニング（カップ麺 vs カップ焼きそばのような上位カテゴリ／下位カテゴリ問題） |
 | 低 | `docker compose` を bot.py から起動・停止するラッパー |
 
 ---

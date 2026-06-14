@@ -31,12 +31,40 @@ quiz-battle orchestrator — GM APIとSolver APIを交互に呼び出してバ�
 """
 
 import asyncio
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 
 import httpx
 
 from quiz_battle.backends import BACKENDS
+
+_RESUME_DIR = Path(__file__).resolve().parent / "sessions"
+
+
+def _resume_path(puzzle_id: str | int) -> Path:
+    return _RESUME_DIR / f"resume_{puzzle_id}.json"
+
+
+def _save_resume(puzzle_id: str | int, state: dict) -> None:
+    _RESUME_DIR.mkdir(parents=True, exist_ok=True)
+    _resume_path(puzzle_id).write_text(
+        json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _load_resume(puzzle_id: str | int) -> dict | None:
+    path = _resume_path(puzzle_id)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _delete_resume(puzzle_id: str | int) -> None:
+    path = _resume_path(puzzle_id)
+    if path.exists():
+        path.unlink()
 
 
 def _log(msg: str) -> None:
@@ -61,6 +89,8 @@ class BattleConfig:
     comprehension_threshold: float = 0.85
     # HTTP タイムアウト（Ollamaの応答待ちを含む。OLLAMA_TIMEOUT より大きくすること）
     http_timeout: float = 32400.0
+    # クラッシュ後のレジューム: 同一 puzzle_id のレジューム状態があれば途中から再開する
+    resume: bool = False
 
 
 @dataclass
@@ -109,20 +139,60 @@ async def run_battle(
         config = BattleConfig()
 
     async with httpx.AsyncClient(timeout=config.http_timeout) as client:
-        # ── 1. セッション初期化 ─────────────────────────────────────────
-        _log(f"初期化中... (puzzle_id={puzzle_id})")
-        resp = await client.post(f"{config.gm_url}/init/{puzzle_id}")
-        resp.raise_for_status()
-        init_data = resp.json()
-        question: str = init_data["question"]
-        qa_log: list[dict] = []
-        _log(f"問題: {question}")
+        # ── 1. セッション初期化 (または再開) ─────────────────────────────
+        resume_state = _load_resume(puzzle_id) if config.resume else None
+        if resume_state:
+            # gm-api のセッション状態が一致するかも確認する（不一致なら新規開始にフォールバック）
+            try:
+                gm_session = (await client.get(f"{config.gm_url}/session")).json()
+            except Exception:
+                gm_session = None
+            if (gm_session
+                    and str(gm_session.get("puzzle_id")) == str(puzzle_id)
+                    and gm_session.get("qa_log") == resume_state["qa_log"]):
+                question = resume_state["question"]
+                qa_log = list(resume_state["qa_log"])
+                comprehension = resume_state["comprehension"]
+                _max_comprehension = resume_state["_max_comprehension"]
+                _stagnant_rounds = resume_state["_stagnant_rounds"]
+                _empty_streak = resume_state["_empty_streak"]
+                _log(f"再開: {len(qa_log)}問から再開 (puzzle_id={puzzle_id}, "
+                     f"comp={comprehension:.0%}, max={_max_comprehension:.0%}, "
+                     f"stagnant={_stagnant_rounds})")
+                _log(f"問題: {question}")
+            else:
+                _log("再開: 状態が gm-api セッションと不一致のため新規開始")
+                resume_state = None
+
+        if not resume_state:
+            _log(f"初期化中... (puzzle_id={puzzle_id})")
+            resp = await client.post(f"{config.gm_url}/init/{puzzle_id}")
+            resp.raise_for_status()
+            init_data = resp.json()
+            question = init_data["question"]
+            qa_log = []
+            comprehension = 0.0
+            _empty_streak = 0
+            _max_comprehension = 0.0
+            _stagnant_rounds = 0
+            _log(f"問題: {question}")
 
         # ── 2. Q&Aループ ────────────────────────────────────────────────
-        comprehension: float = 0.0
         stop_reason = "max_questions到達"
-        _empty_streak: int = 0
         _MAX_EMPTY_RETRIES: int = 2
+
+        def _checkpoint() -> None:
+            _save_resume(puzzle_id, {
+                "puzzle_id": str(puzzle_id),
+                "question": question,
+                "qa_log": qa_log,
+                "comprehension": comprehension,
+                "_max_comprehension": _max_comprehension,
+                "_stagnant_rounds": _stagnant_rounds,
+                "_empty_streak": _empty_streak,
+            })
+
+        _checkpoint()
 
         for _round in range(config.max_questions // 3 + 1):
             # lower以上かつ真相究明度が閾値に達したら早期submit
@@ -143,12 +213,18 @@ async def run_battle(
                 f"{config.solver_url}/questions",
                 json={"puzzle_id": str(puzzle_id), "question": question, "qa_log": qa_log,
                       "backend": config.solver_backend, "model": config.model,
-                      "retry_count": _empty_streak},
+                      "retry_count": _empty_streak,
+                      "stagnant_rounds": _stagnant_rounds},
             )
             resp.raise_for_status()
             solver_resp = resp.json()
             pending_questions: list[str] = solver_resp["pending_questions"]
             comprehension = max(0.0, min(1.0, float(solver_resp.get("comprehension", 0.0))))
+            if comprehension > _max_comprehension:
+                _max_comprehension = comprehension
+                _stagnant_rounds = 0
+            else:
+                _stagnant_rounds += 1
 
             if not pending_questions:
                 _empty_streak += 1
@@ -175,10 +251,37 @@ async def run_battle(
             for qa in qa_log[-len(pending_questions):]:
                 print(f"         → {qa['a']}", flush=True)
 
+            _checkpoint()
+
             if len(qa_log) >= config.max_questions:
                 break
 
         _log(f"Q&A終了: {stop_reason}  合計{len(qa_log)}問")
+
+        # ── 2.5. 提出前チェック ─────────────────────────────────────────
+        _log("Solverが提出前チェック中（未解決事項の確認）...")
+        resp = await client.post(
+            f"{config.solver_url}/pre_submit_check",
+            json={"puzzle_id": str(puzzle_id), "question": question, "qa_log": qa_log,
+                  "backend": config.solver_backend, "model": config.model},
+        )
+        resp.raise_for_status()
+        check_questions: list[str] = resp.json().get("pending_questions", [])
+        if check_questions:
+            _log(f"提出前チェック: {len(check_questions)}問の追加質問あり")
+            for i, q in enumerate(check_questions, 1):
+                print(f"         (追加)Q{len(qa_log) + i}: {q}", flush=True)
+            resp = await client.post(
+                f"{config.gm_url}/answer",
+                json={"pending_questions": check_questions},
+            )
+            resp.raise_for_status()
+            qa_log = resp.json()["qa_log"]
+            for qa in qa_log[-len(check_questions):]:
+                print(f"         → {qa['a']}", flush=True)
+            _checkpoint()
+        else:
+            _log("提出前チェック: 追加質問なし")
 
         # ── 3. 最終理論の提出 ───────────────────────────────────────────
         _log("Solverが最終理論を構築中...")
@@ -197,6 +300,8 @@ async def run_battle(
         resp.raise_for_status()
         score = resp.json()
         _log(f"採点完了: {score.get('coverage_pct')}%  covered={score.get('covered')}  uncovered={score.get('uncovered')}")
+
+        _delete_resume(puzzle_id)
 
         return BattleResult(
             puzzle_id=str(puzzle_id),
@@ -232,9 +337,12 @@ if __name__ == "__main__":
                         help=f"強制submit 閾値（デフォルト: {BattleConfig.upper_submit_threshold}）")
     parser.add_argument("--comprehension-threshold", type=float, default=None,
                         help=f"早期submit の真相究明度閾値（デフォルト: {BattleConfig.comprehension_threshold}）")
+    parser.add_argument("--resume", action="store_true",
+                        help="同一 puzzle_id のレジューム状態があればクラッシュ位置から再開する")
     args = parser.parse_args()
 
-    config = BattleConfig(solver_backend=args.solver_backend, model=args.model)
+    default_model = BACKENDS.get(args.solver_backend, "")
+    config = BattleConfig(solver_backend=args.solver_backend, model=args.model or default_model)
     if args.max_questions is not None:
         config.max_questions = args.max_questions
     if args.lower_submit_threshold is not None:
@@ -243,6 +351,7 @@ if __name__ == "__main__":
         config.upper_submit_threshold = args.upper_submit_threshold
     if args.comprehension_threshold is not None:
         config.comprehension_threshold = args.comprehension_threshold
+    config.resume = args.resume
 
     async def main():
         model_label = config.model or f"(env default for {config.solver_backend})"
@@ -255,6 +364,6 @@ if __name__ == "__main__":
         print(f"理論: {result.theory}")
         print(f"使用質問数: {result.questions_used}  真相究明度: {result.comprehension:.0%}")
         print(f"到達率: {result.coverage_pct}%  covered={result.covered}  uncovered={result.uncovered}")
-        print(f"採用: {'✓ PASS' if result.passed else f'✗ FAIL — {result.rejection_reason}'}")
+        print(f"採用: {'PASS' if result.passed else f'FAIL -- {result.rejection_reason}'}")
 
     asyncio.run(main())
