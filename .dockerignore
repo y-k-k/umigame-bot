@@ -7,4 +7,12 @@ __pycache__/
 venv/
 .claude/
 issues/
+docs/
+scripts/
+quiz_battle/
+output/
+data/sessions/
 CLAUDE.private.md
+CLAUDE.md
+Makefile
+README.md

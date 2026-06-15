@@ -5,8 +5,7 @@ services:
       dockerfile: quiz_battle/gm_api/Dockerfile
     volumes:
       - ${CLAUDE_DIR}:/root/.claude:ro   # Claude Code 認証情報（API KEY 不要）
-      - ../puzzles:/app/puzzles
-      - ../.claude:/app/.claude
+      - ../data:/app/data
     environment:
       - SERVER_PORT=8001
       - MERIDIAN_MODEL=${MERIDIAN_MODEL:-claude-sonnet-4-6}

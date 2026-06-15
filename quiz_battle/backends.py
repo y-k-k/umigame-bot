@@ -6,5 +6,5 @@ Solver バックエンドの定義。
 BACKENDS: dict[str, str] = {
     "ollama":      "qwen3:14b-q4_K_M",
     "meridian":    "claude-sonnet-4-6",   # Claude Code の認証情報を使用
-    "openrouter":  "deepseek/deepseek-v4-flash",
+    "openrouter":  "nvidia/nemotron-3-ultra-550b-a55b:free",
 }

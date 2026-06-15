@@ -7,7 +7,7 @@
 
 ## 1. 重複チェック
 
-`puzzles/puzzles.json` を読み、既存の問題と `question` が一致するものがないか確認する。  
+`data/puzzles.json` を読み、既存の問題と `question` が一致するものがないか確認する。  
 一致する問題があれば、その旨を伝えて追加を中止する（`title` が違っても `question` が同じなら重複とみなす）。
 
 ---

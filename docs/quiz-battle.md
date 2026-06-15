@@ -27,8 +27,8 @@ orchestrator.py
 | | gm-api | solver-api |
 |---|---|---|
 | 役割 | 出題・回答・採点 | 質問生成・理論提出 |
-| `../puzzles/` | ✅ read/write マウント | 不要（stateless） |
-| `../.claude/` | ✅ フルマウント（answer/elements 込み） | ❌ マウントなし |
+| `../data/` | ✅ read/write マウント | 不要（stateless） |
+| `~/.claude/` (OAuth) | ✅ マウント | ✅ マウント |
 | Claude 認証 | `~/.claude` マウント（OAuth） | `~/.claude` マウント（OAuth） |
 | `ANTHROPIC_API_KEY` | **不要** | **不要** |
 
@@ -98,7 +98,7 @@ quiz-battle の用途（解かれやすさ評価）では問題なし。
 |---|---|
 | solver-api に `.claude/` をマウントしない | `quiz_session_gm.json`（answer/elements）に物理アクセス不可 |
 | session state をリクエストで渡す（ステートレス設計） | ファイルマウント自体が不要 |
-| `quiz_session_gm.json` を `puzzles/` 外の `.claude/` に配置 | ファイル名を知っていてもパスが推測困難 |
+| `quiz_session_gm.json` を `data/sessions/` 配下のプライベート state として管理 | solver-api から `data/` をマウントしない設計を保つ限り、ファイル名が分かってもアクセス不可 |
 
 ### 5. クラッシュ耐性
 
@@ -108,7 +108,7 @@ quiz-battle の用途（解かれやすさ評価）では問題なし。
 |---|---|---|
 | Meridian 認証 keep-alive | `gm_api/main.py` `_meridian_keepalive` | 3 分おきに 1 トークン ping。失敗時は `pkill -f meridian` で再起動して `~/.claude` を読み直す |
 | `procps` パッケージ | `gm_api/Dockerfile` | `pkill` を提供（slim イメージには含まれない） |
-| GM セッションの永続化 | `puzzles/quiz_session.json` をボリュームマウント | コンテナ再起動後もセッションが残る |
+| GM セッションの永続化 | `data/sessions/quiz_session.json` をボリュームマウント | コンテナ再起動後もセッションが残る |
 | orchestrator レジューム | `quiz_battle/sessions/resume_<puzzle_id>.json` | GM /answer 直後・pre_submit 直後にチェックポイント。`--resume` で復帰 |
 
 ---

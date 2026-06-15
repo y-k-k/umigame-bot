@@ -6,10 +6,19 @@ dist/
 build/
 .venv/
 venv/
-puzzles/puzzles.json
-puzzles/knowledge_base.json
-*.json
+
+# Runtime data / output
+data/puzzles.json
+data/knowledge_base.json
+data/sessions/
+output/
+
+# Legacy
 results/
+*.json
+!data/puzzles.example.json
+
+# Misc
 issues/
 .claude/
 CLAUDE.private.md

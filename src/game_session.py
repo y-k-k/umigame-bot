@@ -1,9 +1,7 @@
 import json
-from pathlib import Path
 from dataclasses import dataclass, field
 
-
-PUZZLES_PATH = Path(__file__).parent / "puzzles" / "puzzles.json"
+from output_paths import PUZZLES_FILE as PUZZLES_PATH
 
 
 @dataclass

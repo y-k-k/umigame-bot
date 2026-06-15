@@ -13,7 +13,7 @@
 |---|---|---|
 | 場所 | `quiz_battle/solver_api/main.py` | `.claude/skills/solve-quiz/SKILL.md` |
 | 役割 | quiz-battle（自動評価）の Solver | インタラクティブにユーザーが回す動作確認用 |
-| 状態管理 | ステートレス（リクエストで qa_log を受け取る） | `puzzles/quiz_session.json` を読み書き |
+| 状態管理 | ステートレス（リクエストで qa_log を受け取る） | `data/sessions/quiz_session.json` を読み書き |
 | LLM | ollama / meridian / openrouter から選択 | Claude Code（呼び出し元） |
 | 利用される文脈 | バトル自動実行 | スキル単体での手動検証 |
 

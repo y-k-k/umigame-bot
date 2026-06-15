@@ -1,12 +1,17 @@
 import os
-import time
+import sys
 import asyncio
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 
 import game_session as gs
 import claude_client as cc
+import quiz_workflow
 
 load_dotenv()
 
@@ -26,7 +31,59 @@ async def on_ready():
     print(f"Bot起動: {bot.user}")
 
 
-async def _do_auto_generate(channel: discord.TextChannel) -> None:
+def _make_discord_reporter(channel: discord.TextChannel):
+    from review_evaluator import CHECK_LABELS
+
+    async def reporter(event: quiz_workflow.WorkflowEvent) -> None:
+        if event.type == "start":
+            await channel.send("🎲 **自動作問モード開始**\n問題を生成しています...")
+        elif event.type == "generated":
+            await channel.send(
+                f"📝 **作問完了**（{event.elapsed_secs}秒） "
+                f"[{event.attempt}/{event.max_attempts}回目]"
+            )
+        elif event.type == "review_start":
+            await channel.send("🔍 **校閲中...**")
+        elif event.type == "check_result":
+            label = CHECK_LABELS.get(event.check_name, event.check_name)
+            icon = "✅" if event.check_passed else "❌"
+            status = "PASS" if event.check_passed else "FAIL"
+            await channel.send(f"{icon} {event.check_name} ({label}): {status}")
+        elif event.type == "reviewed":
+            if event.reviewed is None:
+                await channel.send(f"⚠️ 校閲が解析できませんでした — {event.reason}")
+            else:
+                print(f"[review_quiz] {event.reviewed}")
+                score = event.score if event.score is not None else "—"
+                await channel.send(
+                    f"📊 **校閲完了**（{event.elapsed_secs}秒） "
+                    f"判定: **{event.verdict}** スコア: **{score}/10**"
+                )
+        elif event.type == "prepared":
+            await channel.send(f"⚙️ **出題準備完了**（{event.elapsed_secs}秒）")
+        elif event.type == "error":
+            await channel.send(f"❌ {event.reason}")
+        elif event.type == "exhausted":
+            await channel.send(
+                f"❌ {event.max_attempts}回試行しましたが、基準を満たす問題を生成できませんでした。"
+            )
+        elif event.type == "canceled":
+            await channel.send("⛔ 自動作問をキャンセルしました。")
+        # attempt / ready は黙って通過
+
+    return reporter
+
+
+GENERATE_MODEL_CHOICES: list[tuple[str, str, str]] = [
+    ("Gemini 3.1 Pro Preview", "openrouter", "google/gemini-3.1-pro-preview"),
+    ("Qwen 3.7 Max", "openrouter", "qwen/qwen3.7-max"),
+    ("Claude Opus 4.8", "anthropic", "claude-opus-4-8"),
+]
+
+
+async def _do_auto_generate(
+    channel: discord.TextChannel, *, backend: str, model: str,
+) -> None:
     if channel.id in _generating_channels:
         await channel.send("⚠️ すでに自動作問が進行中です。`!中断` でキャンセルできます。")
         return
@@ -35,78 +92,26 @@ async def _do_auto_generate(channel: discord.TextChannel) -> None:
     _cancel_requested.discard(channel.id)
 
     try:
-        await _run_auto_generate(channel)
+        result = await quiz_workflow.auto_generate(
+            backend=backend,
+            model=model,
+            reporter=_make_discord_reporter(channel),
+            is_canceled=lambda: channel.id in _cancel_requested,
+        )
     finally:
         _generating_channels.discard(channel.id)
         _cancel_requested.discard(channel.id)
 
-
-async def _run_auto_generate(channel: discord.TextChannel) -> None:
-    await channel.send("🎲 **自動作問モード開始**\n問題を生成しています...")
-
-    puzzles = gs.load_puzzles_raw()
-    reviewed: dict | None = None
-    failed_attempts: list[str] = []
-
-    for attempt in range(1, 11):
-        if channel.id in _cancel_requested:
-            await channel.send("⛔ 自動作問をキャンセルしました。")
-            return
-
-        previous_feedback = "\n".join(failed_attempts) if failed_attempts else None
-
-        t0 = time.time()
-        async with channel.typing():
-            try:
-                qa = await asyncio.to_thread(cc.generate_quiz, puzzles, previous_feedback)
-            except Exception as e:
-                await channel.send(f"❌ 作問中にエラーが発生しました: {e}")
-                return
-        gen_secs = round(time.time() - t0)
-        await channel.send(f"📝 **作問完了**（{gen_secs}秒） [{attempt}/10回目]")
-
-        t0 = time.time()
-        async with channel.typing():
-            try:
-                reviewed = await asyncio.to_thread(cc.review_quiz, qa["question"], qa["answer"])
-            except Exception as e:
-                await channel.send(f"❌ 校閲中にエラーが発生しました: {e}")
-                return
-        review_secs = round(time.time() - t0)
-        score = reviewed["score"]
-        print(f"[review_quiz] {reviewed}")
-        await channel.send(f"🔍 **校閲完了**（{review_secs}秒） スコア: **{score}/10**")
-
-        if score >= 7:
-            break
-        failed_attempts.append(
-            f"試行{attempt}: Q={qa['question']} → {reviewed['reason']}"
-        )
-    else:
-        await channel.send("❌ 10回試行しましたが、基準を満たす問題を生成できませんでした。")
+    if result is None:
         return
-
-    t0 = time.time()
-    async with channel.typing():
-        try:
-            prepared = await asyncio.to_thread(
-                cc.prepare_quiz,
-                reviewed["corrected_question"],
-                reviewed["corrected_answer"],
-            )
-        except Exception as e:
-            await channel.send(f"❌ 出題準備中にエラーが発生しました: {e}")
-            return
-    prep_secs = round(time.time() - t0)
-    await channel.send(f"⚙️ **出題準備完了**（{prep_secs}秒）")
 
     session = gs.start_generated_session(
         channel.id,
         "ウミガメのスープ",
-        reviewed["corrected_question"],
-        reviewed["corrected_answer"],
-        prepared["elements"],
-        prepared.get("knowledge_base"),
+        result.reviewed["corrected_question"],
+        result.reviewed["corrected_answer"],
+        result.prepared["elements"],
+        result.prepared.get("knowledge_base"),
     )
 
     embed = discord.Embed(
@@ -178,6 +183,35 @@ class PuzzleSelectView(discord.ui.View):
         return callback
 
 
+class GenerateModelSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=300)
+        for label, backend, model in GENERATE_MODEL_CHOICES:
+            button = discord.ui.Button(
+                label=label,
+                custom_id=f"genmodel_{backend}_{model}",
+                style=discord.ButtonStyle.primary,
+            )
+            button.callback = self._make_callback(backend, model, label)
+            self.add_item(button)
+
+    def _make_callback(self, backend: str, model: str, label: str):
+        async def callback(interaction: discord.Interaction):
+            await interaction.response.defer()
+            for child in self.children:
+                child.disabled = True
+            try:
+                await interaction.message.edit(view=self)
+            except discord.HTTPException:
+                pass
+            await interaction.channel.send(f"🎯 **{label}** で自動作問を開始します")
+            await _do_auto_generate(
+                interaction.channel, backend=backend, model=model,
+            )
+
+        return callback
+
+
 @bot.command(name="問題一覧")
 async def list_puzzles(ctx, page: int = 1):
     puzzles = gs.list_puzzles()
@@ -198,7 +232,14 @@ async def list_puzzles(ctx, page: int = 1):
 @bot.command(name="開始")
 async def start_game(ctx, puzzle_id: int):
     if puzzle_id == -1:
-        await _do_auto_generate(ctx.channel)
+        if ctx.channel.id in _generating_channels:
+            await ctx.send("⚠️ すでに自動作問が進行中です。`!中断` でキャンセルできます。")
+            return
+        view = GenerateModelSelectView()
+        await ctx.send(
+            "**🎲 自動作問モード** — 使用するモデルを選択してください",
+            view=view,
+        )
     else:
         await _do_start_game(ctx.channel, puzzle_id)
 

@@ -15,10 +15,10 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 APP_DIR = Path("/app")
-PUZZLES_FILE = APP_DIR / "puzzles" / "puzzles.json"
-DRAFT_FILE = APP_DIR / "puzzles" / "new_puzzles_draft.json"
-SESSION_FILE = APP_DIR / "puzzles" / "quiz_session.json"
-GM_FILE = APP_DIR / ".claude" / "quiz_session_gm.json"
+PUZZLES_FILE = APP_DIR / "data" / "puzzles.json"
+DRAFT_FILE = APP_DIR / "data" / "sessions" / "new_puzzles_draft.json"
+SESSION_FILE = APP_DIR / "data" / "sessions" / "quiz_session.json"
+GM_FILE = APP_DIR / "data" / "sessions" / "quiz_session_gm.json"
 
 _meridian = anthropic.AsyncAnthropic(api_key="unused", base_url="http://127.0.0.1:3456")
 MERIDIAN_MODEL = os.getenv("MERIDIAN_MODEL", "claude-sonnet-4-6")

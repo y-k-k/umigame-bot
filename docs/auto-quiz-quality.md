@@ -52,7 +52,7 @@ Claude Code 上で直接作問した場合と比べて品質（校閲スコア�
    - 高評価パターン（物の種類違い・場所違い・状況違い）をカテゴリ別に示す
 
 2. **作問→校閲の試行回数を設定可能にする**
-   - 現状ハードコードで 10 回上限（`bot.py:51`）
+   - 現状ハードコードで 10 回上限（`src/quiz_workflow.py` の `max_attempts` デフォルト）
    - コマンド引数や設定で変更できると運用しやすい
 
 ### 優先度 低
@@ -106,9 +106,9 @@ gen-quiz → review-quiz（スコア≥9）→ quiz-battle（全要素到達）�
 
 | ファイル | 役割 |
 |---|---|
-| `bot.py` | `_run_auto_generate` — 作問ループの実装 |
-| `claude_client.py` | `generate_quiz` — Extended Thinking 呼び出し |
-| `prompts.py` | `build_quiz_generator_prompt` / `build_quiz_reviewer_prompt` ほか |
+| `src/bot.py` | `_run_auto_generate` — 作問ループの実装 |
+| `src/claude_client.py` | `generate_quiz` — Extended Thinking 呼び出し |
+| `src/prompts.py` | `build_quiz_generator_prompt` / `build_quiz_reviewer_prompt` ほか |
 | `quiz_battle/orchestrator.py` | quiz-battle 制御ロジック（`run_battle` / CLI） |
 | `quiz_battle/gm_api/main.py` | GM API サーバー |
 | `quiz_battle/solver_api/main.py` | Solver API サーバー |
@@ -116,7 +116,7 @@ gen-quiz → review-quiz（スコア≥9）→ quiz-battle（全要素到達）�
 | `.claude/skills/review-quiz/SKILL.md` | `/review-quiz` スキル（校閲ステップ単体実行） |
 | `.claude/skills/quiz-gm/SKILL.md` | `/quiz-gm` スキル（出題者エージェント、インタラクティブ用） |
 | `.claude/skills/solve-quiz/SKILL.md` | `/solve-quiz` スキル（回答者エージェント、インタラクティブ用） |
-| `puzzles/quiz_session.json` | 実行中セッションの公開情報（GM・solver 共有） |
-| `.claude/quiz_session_gm.json` | 実行中セッションの GM 専用情報（answer・elements） |
+| `data/sessions/quiz_session.json` | 実行中セッションの公開情報（GM・solver 共有） |
+| `data/sessions/quiz_session_gm.json` | 実行中セッションの GM 専用情報（answer・elements） |
 | `docs/solver-agent.md` | solver エージェントの詳細設計 |
 | `docs/quiz-battle.md` | quiz-battle システム全体の設計 |

@@ -1,21 +1,23 @@
+"""ゲームプレイ中の Claude API 呼び出し（出題者役・採点・答え合わせ）。
+
+作問・校閲・出題準備は backend 切替に対応するため quiz_llm.py に分離した。
+"""
 import json
 import re
+
 import anthropic
+
 from prompts import (
     build_game_master_prompt,
     build_progress_prompt,
     build_reveal_prompt,
-    build_quiz_generator_prompt,
-    build_quiz_reviewer_prompt,
-    build_quiz_preparer_prompt,
 )
 
-_client = None
+_client: anthropic.Anthropic | None = None
 
 
 def _parse_json(raw: str) -> dict | list:
     text = raw.strip()
-    # ```json ... ``` または ``` ... ``` を剥がす
     match = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if match:
         text = match.group(1).strip()
@@ -63,40 +65,6 @@ def check_score(question: str, answer: str, user_theory: str, elements: list[dic
     total = len(elements)
     progress = round(len(covered) / total * 100) if total > 0 else 0
     return progress, covered
-
-
-def generate_quiz(puzzles: list[dict], previous_feedback: str | None = None) -> dict:
-    response = get_client().messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=12000,
-        thinking={"type": "enabled", "budget_tokens": 10000},
-        system=build_quiz_generator_prompt(puzzles, previous_feedback),
-        messages=[{"role": "user", "content": "新しい問題を1つ作成してください"}],
-    )
-    for block in response.content:
-        if block.type == "text":
-            return _parse_json(block.text)
-    raise ValueError("text block not found in response")
-
-
-def review_quiz(question: str, answer: str) -> dict:
-    response = get_client().messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=build_quiz_reviewer_prompt(),
-        messages=[{"role": "user", "content": f"## 問題\n{question}\n\n## 答え\n{answer}"}],
-    )
-    return _parse_json(response.content[0].text)
-
-
-def prepare_quiz(question: str, answer: str) -> dict:
-    response = get_client().messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=2048,
-        system=build_quiz_preparer_prompt(),
-        messages=[{"role": "user", "content": f"## 問題\n{question}\n\n## 答え\n{answer}"}],
-    )
-    return _parse_json(response.content[0].text)
 
 
 def reveal_answer(question: str, answer: str, elements: list[dict]) -> str:

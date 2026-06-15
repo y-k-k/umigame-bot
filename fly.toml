@@ -7,7 +7,7 @@ app = 'umigame-bot'
 primary_region = 'nrt'
 
 [build]
-  dockerfile = 'Dockerfile'
+  dockerfile = 'deploy/Dockerfile'
 
 [env]
   PYTHONUNBUFFERED = '1'

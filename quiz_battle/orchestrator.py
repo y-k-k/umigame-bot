@@ -40,7 +40,7 @@ import httpx
 
 from quiz_battle.backends import BACKENDS
 
-_RESUME_DIR = Path(__file__).resolve().parent / "sessions"
+_RESUME_DIR = Path(__file__).resolve().parents[1] / "data" / "sessions" / "battle"
 
 
 def _resume_path(puzzle_id: str | int) -> Path:
