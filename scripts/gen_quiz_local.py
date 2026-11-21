@@ -67,6 +67,7 @@ async def _amain(args: argparse.Namespace) -> int:
         model=args.model,
         max_attempts=args.max_attempts,
         skip_review=args.no_review,
+        lenient_review=args.lenient,
         reporter=_print_reporter,
     )
     if result is None:
@@ -100,6 +101,8 @@ def main() -> None:
                         help="reject 判定時のリトライ上限（デフォルト: 10）")
     parser.add_argument("--no-review", action="store_true",
                         help="校閲ステップを省略し作問結果をそのまま採用する（生成率優先）")
+    parser.add_argument("--lenient", action="store_true",
+                        help="採用判定を緩める（critical 2件以上のみ reject）。Discord bot と同じ閾値")
     parser.add_argument("-o", "--output",
                         help=f"結果を書き出す JSON ファイルパス（省略時は {NEW_PUZZLES_DRAFT_FILE.relative_to(Path(__file__).resolve().parents[1])}）")
     args = parser.parse_args()

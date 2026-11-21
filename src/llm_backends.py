@@ -98,7 +98,10 @@ def _call_anthropic(*, model: str, system: str, user: str,
         messages=[{"role": "user", "content": user}],
     )
     if thinking_budget:
-        kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+        # Opus 4.7 以降は budget_tokens 形式を 400 で拒否するため adaptive thinking を使用。
+        # effort は Sonnet 4.6 / Opus 4.6+ で有効。Haiku 4.5 / Sonnet 4.5 ではエラーになる点に注意。
+        kwargs["thinking"] = {"type": "adaptive"}
+        kwargs["output_config"] = {"effort": "high"}
     response = _get_anthropic_client().messages.create(**kwargs)
     for block in response.content:
         if getattr(block, "type", None) == "text":

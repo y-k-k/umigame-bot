@@ -68,6 +68,7 @@ async def auto_generate(
     model: str = "",
     max_attempts: int = 10,
     skip_review: bool = False,
+    lenient_review: bool = False,
     reporter: Reporter,
     is_canceled: CancelCheck = _noop_cancel,
 ) -> GenerationResult | None:
@@ -79,6 +80,8 @@ async def auto_generate(
         max_attempts: verdict=reject 時のリトライ上限
         skip_review: True の場合、校閲ステップを丸ごとスキップし作問結果をそのまま採用する。
                      校閲 LLM が不安定な backend で生成率を上げたいときに使う。
+        lenient_review: True の場合、採用判定の閾値を緩める（critical 2 件以上のみ reject）。
+                        Discord bot 等の対話用途で待ち時間を抑えたいときに使う。
         reporter: 進行状況を通知する async コールバック
         is_canceled: True を返したらリトライループから抜ける
 
@@ -170,8 +173,9 @@ async def auto_generate(
                 check_reason=check.reason,
             ))
 
-        v = review_result.verdict()
-        reviewed = review_result.to_dict()
+        strict_mode = not lenient_review
+        v = review_result.verdict(strict=strict_mode)
+        reviewed = review_result.to_dict(strict=strict_mode)
         reviewed["reason"] = ", ".join(
             f"{name}={'PASS' if c.passed else 'FAIL'}"
             for name, c in review_result.checks.items()

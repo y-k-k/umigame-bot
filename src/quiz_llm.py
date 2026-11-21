@@ -160,10 +160,30 @@ def prepare_quiz(
     backend: str = "anthropic",
     model: str = "",
 ) -> dict:
-    return _call_and_parse_json(  # type: ignore[return-value]
+    """出題準備。LLM が dict 形式を守らないことがあるため寛容に救済する。
+
+    救済パターン:
+      - bare list（`[{...}, {...}]`）が返ったら `{"elements": [...]}` として扱う
+    """
+    parsed = _call_and_parse_json(  # type: ignore[assignment]
         system=build_quiz_preparer_prompt(),
         user=f"## 問題\n{question}\n\n## 答え\n{answer}",
-        max_tokens=4096,
+        max_tokens=8192,
         backend=backend,
         model=model,
+        expect_dict=False,
     )
+    if isinstance(parsed, list):
+        # 多くの場合、LLM は elements 配列を直接返している
+        return {"elements": parsed}
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"prepare_quiz response was neither dict nor list (got {type(parsed).__name__})"
+        )
+    # dict の場合、elements が必須なので最低限の整合性チェック
+    if "elements" not in parsed:
+        # 万一 elements がトップレベルに無い場合は parsed 全体を elements と解釈してみる
+        # 例: {"A": {...}, "B": {...}} のような dict 形の場合
+        if all(isinstance(v, dict) for v in parsed.values()):
+            return {"elements": list(parsed.values())}
+    return parsed

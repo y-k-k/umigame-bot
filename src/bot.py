@@ -95,6 +95,7 @@ async def _do_auto_generate(
         result = await quiz_workflow.auto_generate(
             backend=backend,
             model=model,
+            lenient_review=True,
             reporter=_make_discord_reporter(channel),
             is_canceled=lambda: channel.id in _cancel_requested,
         )

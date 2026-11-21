@@ -59,34 +59,56 @@ class ReviewResult:
     score: int | None = None
     raw_text: str = ""
 
-    def verdict(self) -> Verdict:
-        critical_fail = any(
-            name in self.checks and not self.checks[name].passed
-            for name in CRITICAL_CHECKS
+    def verdict(self, strict: bool = True) -> Verdict:
+        """採用判定。
+
+        strict=True（ローカル / 品質検証用）:
+          - critical FAIL × 1 以上     → reject
+          - soft FAIL × 0              → adopt
+          - soft FAIL × 1              → revise
+          - soft FAIL × 2 以上          → reject
+
+        strict=False（Discord bot 等の対話用、緩め）:
+          - critical FAIL × 2 以上      → reject
+          - critical=0 & soft=0          → adopt
+          - それ以外                     → revise（採用扱い）
+        """
+        critical_fails = sum(
+            1 for name in CRITICAL_CHECKS
+            if name in self.checks and not self.checks[name].passed
         )
-        if critical_fail:
-            return "reject"
-        soft_fail = sum(
+        soft_fails = sum(
             1 for name in SOFT_CHECKS
             if name in self.checks and not self.checks[name].passed
         )
-        if soft_fail == 0:
+
+        if strict:
+            if critical_fails > 0:
+                return "reject"
+            if soft_fails == 0:
+                return "adopt"
+            if soft_fails == 1:
+                return "revise"
+            return "reject"
+
+        # lenient
+        if critical_fails >= 2:
+            return "reject"
+        if critical_fails == 0 and soft_fails == 0:
             return "adopt"
-        if soft_fail == 1:
-            return "revise"
-        return "reject"
+        return "revise"
 
     def failed_check_names(self) -> list[str]:
         return [name for name, c in self.checks.items() if not c.passed]
 
-    def to_dict(self) -> dict:
+    def to_dict(self, strict: bool = True) -> dict:
         """gen_quiz_local 等で JSON 保存するための辞書化。"""
         return {
             "checks": {
                 name: {"passed": c.passed, "reason": c.reason}
                 for name, c in self.checks.items()
             },
-            "verdict": self.verdict(),
+            "verdict": self.verdict(strict=strict),
             "corrected_question": self.corrected_question,
             "corrected_answer": self.corrected_answer,
             "score": self.score,

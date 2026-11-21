@@ -22,3 +22,6 @@ results/
 issues/
 .claude/
 CLAUDE.private.md
+
+# Local generation drafts (contain answers)
+drafts/
