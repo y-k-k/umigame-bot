@@ -77,7 +77,7 @@ def _make_discord_reporter(channel: discord.TextChannel):
 GENERATE_MODEL_CHOICES: list[tuple[str, str, str]] = [
     ("Gemini 3.1 Pro Preview", "openrouter", "google/gemini-3.1-pro-preview"),
     ("Qwen 3.7 Max", "openrouter", "qwen/qwen3.7-max"),
-    ("Claude Opus 4.8", "anthropic", "claude-opus-4-8"),
+    ("Claude Opus 5.5", "anthropic", "claude-opus-5-5"),
 ]
 
 
@@ -294,9 +294,13 @@ async def score(ctx, *, theory: str):
         return
 
     async with ctx.typing():
-        progress, covered_ids = await asyncio.to_thread(
-            cc.check_score, session.question, session.answer, theory, session.elements
-        )
+        try:
+            progress, covered_ids = await asyncio.to_thread(
+                cc.check_score, session.question, session.answer, theory, session.elements
+            )
+        except cc.ClaudeRefusal:
+            await ctx.send(cc.REFUSAL_REPLY)
+            return
 
     bar_filled = round(progress / 10)
     bar = "█" * bar_filled + "░" * (10 - bar_filled)

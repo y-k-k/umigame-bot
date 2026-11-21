@@ -1,4 +1,5 @@
-discord.py>=2.3.0
-anthropic>=0.25.0
-python-dotenv>=1.0.0
-httpx>=0.27.0
+# Droplet 作成のたびに build するため、再現性のためバージョンを固定する（ローカル動作確認済みの版）
+discord.py==2.7.1
+anthropic==0.97.0
+python-dotenv==1.2.2
+httpx==0.28.1

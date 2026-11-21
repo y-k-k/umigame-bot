@@ -1,6 +1,6 @@
 """LLM バックエンドの統一呼び出し。
 
-Anthropic（claude-sonnet-4-6 など）と OpenRouter（任意のモデル）を
+Anthropic（claude-sonnet-5-5 など）と OpenRouter（任意のモデル）を
 同じインターフェースで呼べるようにする。
 """
 import json
@@ -12,7 +12,7 @@ import anthropic
 import httpx
 
 
-ANTHROPIC_DEFAULT_MODEL = os.getenv("ANTHROPIC_QUIZ_MODEL", "claude-sonnet-4-6")
+ANTHROPIC_DEFAULT_MODEL = os.getenv("ANTHROPIC_QUIZ_MODEL", "claude-sonnet-5-5")
 OPENROUTER_DEFAULT_MODEL = os.getenv("OPENROUTER_QUIZ_MODEL", "nvidia/nemotron-3-ultra-550b-a55b:free")
 OPENROUTER_TIMEOUT = float(os.getenv("OPENROUTER_TIMEOUT", "300"))
 _OPENROUTER_MAX_RETRIES = 10
@@ -98,8 +98,8 @@ def _call_anthropic(*, model: str, system: str, user: str,
         messages=[{"role": "user", "content": user}],
     )
     if thinking_budget:
-        # Opus 4.7 以降は budget_tokens 形式を 400 で拒否するため adaptive thinking を使用。
-        # effort は Sonnet 4.6 / Opus 4.6+ で有効。Haiku 4.5 / Sonnet 4.5 ではエラーになる点に注意。
+        # budget_tokens 形式は Opus 4.7 / Sonnet 5 以降で 400 になるため adaptive thinking + effort を使う。
+        # thinking_budget なしでも Sonnet 5.5 / Opus 5.5 は既定で adaptive thinking が有効になる。
         kwargs["thinking"] = {"type": "adaptive"}
         kwargs["output_config"] = {"effort": "high"}
     response = _get_anthropic_client().messages.create(**kwargs)
