@@ -8,7 +8,7 @@ Claude APIをゲームマスターとして使い、質問への応答・進捗�
 ```
 src/             Discord bot 本体と作問共通コア（Python）
 scripts/         ローカル CLI（gen_quiz_local.py, run_battle_all.sh）
-deploy/          Dockerfile（fly.toml は仕様上ルート保持）
+deploy/          Dockerfile（data/ はイメージに含めず実行時にマウント）
 quiz_battle/     独立した micro-service 群（gm-api, solver-api, orchestrator）
 data/            静的データ + プロセス間共有 state（後述）
 output/          動作確認の成果物（後述、.gitignore）
@@ -81,7 +81,10 @@ Python コードから書き出すときは [`src/output_paths.py`](src/output_p
 
 ## デプロイ
 
-- **Discord bot (Fly.io)**: `fly deploy` をリポジトリルートで実行（`fly.toml` がルートにあり `deploy/Dockerfile` を参照）。
+- **Discord bot (DigitalOcean)**: 使うときだけ Droplet を作成し、cloud-init で clone → `docker build -f deploy/Dockerfile` → `docker run` する。構成とリクエスト定義は親ディレクトリの `../infra/` と `../PLAN.md` を参照。
+  - `data/puzzles.json` / `data/knowledge_base.json` は GitHub に置かない。cloud-init の `user_data` に gz+b64 で埋め込み、Droplet 上の `/opt/bot-data` に書き出して `/app/data` へ読み取り専用でマウントする。
+  - 秘密情報（`DISCORD_BOT_TOKEN`, `ANTHROPIC_API_KEY`, 任意で `OPENROUTER_API_KEY`）は環境変数で渡す。
+- ローカルで Docker 確認: `docker build -f deploy/Dockerfile -t umigame-bot .` → `docker run --rm --env-file .env -v "${PWD}/data:/app/data:ro" umigame-bot`
 - **quiz_battle (Docker Compose)**: `quiz_battle/` ディレクトリで `docker compose up`。`../data` を bind mount するため、リポジトリルートが親に存在することを前提とする。
 
 ---
